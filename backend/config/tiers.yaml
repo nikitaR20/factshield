@@ -1,0 +1,62 @@
+# Weights feeding the computed support score.
+#
+# The score is arithmetic over these weights, NOT a model's self-reported
+# confidence. Every component is logged in `score_basis` so the number is
+# auditable rather than asserted.
+
+tier_weights:
+  prior_check: 1.0           # a fact-checker already did the work
+  definitional: 1.0          # the body that sets the rule
+  peer_reviewed: 0.9
+  authority: 0.75
+  independent_analysis: 0.7
+  reporting: 0.35
+  low: 0.05                  # retained for amplification detection, near-zero weight
+
+# A source that merely REPORTS that someone made a claim is not evidence the
+# claim is true. Without this, coverage volume gets counted as corroboration.
+# An institution STATING a fact in its own documentation is real evidence —
+# weaker than a fact-check, but not negligible. The original 0.25 combined with
+# a 0.6 minimum meant two authoritative sources could not reach the threshold
+# to produce any score at all, so almost every claim returned "unresolved".
+role_weights:
+  assesses: 1.0
+  asserts: 0.40
+  reports: 0.20
+
+# Structured publication types, where an adapter supplies them.
+# PubMed returning "Systematic Review" as a field beats guessing tier from a URL.
+publication_type_tier:
+  "Systematic Review": peer_reviewed
+  "Meta-Analysis": peer_reviewed
+  "Randomized Controlled Trial": peer_reviewed
+  "Practice Guideline": authority
+  "Review": peer_reviewed
+  "Case Reports": low
+  "Comment": low
+  "Editorial": low
+  "Letter": low
+  "Preprint": low
+
+# Evidence older than this loses weight, per category.
+# Medical findings age slowly; breaking news ages in hours.
+recency_half_life_days:
+  medical: 2000
+  science: 2000
+  political: 540
+  financial: 365
+  breaking_news: 3
+  general: 730
+
+scoring:
+  # Below this total weighted evidence, no score is emitted at all.
+  # "Unresolved" must not collapse into a misleading 50.
+  #
+  # Calibration: one authority source that asserts is 0.75 x 0.40 ~= 0.30, so
+  # two independent ones clear this bar and one does not. That is roughly the
+  # right place to draw the line.
+  min_total_weight: 0.35
+  # Within this band the sides are treated as genuinely contested.
+  contested_band: [35, 65]
+  # Retracted sources are excluded from scoring entirely.
+  exclude_retracted: true

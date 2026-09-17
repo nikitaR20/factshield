@@ -1,0 +1,113 @@
+# Source packs, per category.
+#
+# `authority` is passed wholesale as a domain filter to the search provider in
+# ONE call. The provider ranks across the pack; a cardiology claim and a
+# dermatology claim search the same list and whichever site covers it surfaces.
+# No per-claim source routing is required.
+#
+# `expected_tiers` drives abstention: if none of these tiers appear in the
+# retrieved evidence, the claim is `unestablished` rather than refuted.
+#
+# This file is published in the thesis appendix. A source list that cannot be
+# inspected is not a controlled variable.
+
+medical:
+  adapters: [pubmed, factcheck]
+  expected_tiers: [prior_check, peer_reviewed, authority]
+  authority:
+    - who.int
+    - cdc.gov
+    - nhs.uk
+    - mayoclinic.org
+    - my.clevelandclinic.org
+    - nice.org.uk
+    - cochrane.org
+    - hopkinsmedicine.org
+  use_open_web: false
+
+science:
+  adapters: [crossref, factcheck]
+  expected_tiers: [prior_check, peer_reviewed, authority]
+  authority:
+    - nature.com
+    - science.org
+    - ipcc.ch
+    - nasa.gov
+    - noaa.gov
+    - royalsociety.org
+  use_open_web: false
+
+political:
+  adapters: [factcheck]
+  # These names MUST match the tiers this pack's own sources actually produce.
+  # They previously read [definitional, independent_analysis, reporting] while
+  # Reuters/AP/BBC are listed under `authority` — so a claim backed by Snopes,
+  # Reuters and AP was abstained on for "no source of the required type".
+  expected_tiers: [prior_check, definitional, independent_analysis, authority, reporting]
+  # Definitional claims — what a rule SAYS — have an authoritative source.
+  # Interpretive claims — what a rule DOES — are contested empirical questions.
+  # Treating the incumbent's own figures as ground truth on outcomes would make
+  # the tool inherit whoever is in office, so interpretive claims weight
+  # independent analysis above official sources.
+  authority:
+    - reuters.com
+    - apnews.com
+    - bbc.co.uk
+  jurisdictions:
+    US:
+      adapters: [factcheck, federal_register]
+      definitional:
+        - uscis.gov
+        - dhs.gov
+        - federalregister.gov
+        - congress.gov
+      independent_analysis:
+        - cbo.gov
+        - gao.gov
+        - pewresearch.org
+    UK:
+      adapters: [factcheck, govuk]
+      definitional:
+        - gov.uk
+        - legislation.gov.uk
+        - parliament.uk
+      independent_analysis:
+        - ifs.org.uk
+        - obr.uk
+        - fullfact.org
+  use_open_web: true
+
+financial:
+  adapters: [factcheck]
+  expected_tiers: [prior_check, definitional, authority, reporting]
+  authority:
+    - sec.gov
+    - federalreserve.gov
+    - bankofengland.co.uk
+    - imf.org
+    - worldbank.org
+  use_open_web: true
+
+breaking_news:
+  adapters: [factcheck]
+  # No peer-reviewed source can exist yet. Two independent wire services is
+  # the ceiling, and absence of them is itself informative.
+  expected_tiers: [prior_check, authority, reporting]
+  authority:
+    - reuters.com
+    - apnews.com
+    - afp.com
+    - bbc.co.uk
+  use_open_web: true
+  min_independent_domains: 2
+
+general:
+  adapters: [factcheck]
+  expected_tiers: [prior_check, reporting, authority]
+  authority:
+    - reuters.com
+    - apnews.com
+    - bbc.co.uk
+    - snopes.com
+    - fullfact.org
+  use_open_web: true

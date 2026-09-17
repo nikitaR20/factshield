@@ -1,0 +1,79 @@
+# ---------------------------------------------------------------- secrets
+# The single most important line in this file. A leaked API key in git history
+# is painful to remove — GitHub sees it the moment you push, and rewriting
+# history does not help if anyone has already cloned.
+.env
+.env.*
+!.env.example
+*.key
+credentials.json
+secrets.yaml
+
+# ---------------------------------------------------------------- python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# ---------------------------------------------------------------- testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# ---------------------------------------------------------------- runtime
+# Request logs contain highlighted text, which in study mode is participant
+# data. Never commit these.
+logs/
+*.log
+*.jsonl
+!eval/dataset/claims*.jsonl
+
+# ---------------------------------------------------------------- models
+# Hugging Face downloads the NLI weights here on first run. Hundreds of MB,
+# and they re-download automatically.
+.cache/
+models_cache/
+*.bin
+*.safetensors
+*.onnx
+
+# ---------------------------------------------------------------- eval
+# The snapshotted corpus is large and regenerable. Results are outputs.
+eval/dataset/corpus.jsonl
+eval/results/
+eval/**/*.parquet
+
+# ---------------------------------------------------------------- node
+node_modules/
+package-lock.json
+yarn.lock
+
+# ---------------------------------------------------------------- editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---------------------------------------------------------------- misc
+*.zip
+*.tar.gz
+tmp/
+scratch/

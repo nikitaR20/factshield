@@ -1,0 +1,7 @@
+{"id":"dc001","claim":"The Great Wall of China is visible from the Moon with the naked eye.","label":"refuted","category":"direct_false"}
+{"id":"dc002","claim":"A Fargo, North Dakota, man was arrested for clearing snow with a flamethrower.","label":"refuted","category":"satirical_framing"}
+{"id":"hd001","claim":"Some scientists believe 5G signals cause cancer.","label":"partly_supported","category":"hedged","note":"True that some individuals say this; no peer-reviewed support. Axis 2 should read overstated."}
+{"id":"hd002","claim":"Many experts suggest that vaccines may cause long-term harm.","label":"partly_supported","category":"hedged"}
+{"id":"pt001","claim":"The COVID-19 vaccine was approved in 2021 and causes infertility.","label":"partly_supported","category":"partial_truth","note":"Decomposition required. First half supported, second refuted."}
+{"id":"of001","claim":"Pluto is the ninth planet in our solar system.","label":"refuted","category":"outdated","note":"True until 2006. Axis 2 should read outdated."}
+{"id":"sf001","claim":"COVID originated from China.","label":"partly_supported","category":"contested","note":"Geographic origin settled; mechanism unresolved. Decomposition required."}

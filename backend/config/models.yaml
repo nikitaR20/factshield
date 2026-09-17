@@ -1,0 +1,98 @@
+# Model assignment per stage.
+#
+# MODEL NAMES GO STALE. Providers deprecate and rename aggressively, and a
+# stale name returns 404 — which looks identical to a broken key. If a stage
+# starts failing, hit GET /v1/models to see what your key can actually call
+# and paste a name in here. Nothing else needs to change.
+#
+# Cost strategy: exactly ONE potentially-paid call per request, and only for
+# novel claims. Everything else is free-tier or local.
+#
+#   triage    -> one small call per request, gates the expensive path.
+#   grading   -> local NLI. Runs 10-15x per request; an API call here is where
+#                cost and latency would actually come from.
+#   grounding -> same local NLI, reused.
+#   decide    -> the only call that may cost money, and it is SKIPPED entirely
+#                when a published fact-check resolves the claim (fast path).
+
+triage:
+  provider: gemini
+  model: gemini-3.5-flash-lite
+  temperature: 0
+  max_tokens: 600
+  timeout_s: 8
+
+decide:
+  provider: gemini
+  model: gemini-3.5-flash-lite
+  temperature: 0
+  max_tokens: 700
+  timeout_s: 12
+  # Only the top N graded documents reach this call. Models get worse at long
+  # contexts, not better, and a smaller payload is faster and cheaper.
+  max_evidence_items: 6
+
+nli:
+  # Runs locally. No API cost, no per-document latency.
+  #
+  # The ~92s measured earlier came from sequence length 512, 4 candidate
+  # sentences per document and 6 documents per channel — not from this model.
+  # With max_length 256, 3 candidates and 4 documents it is far cheaper.
+  #
+  # VERIFY ANY REPLACEMENT EXISTS ON huggingface.co AND HAS 3 LABELS. A wrong
+  # name used to fall back to the keyword stub silently; it now prints a loud
+  # error and /health reports `lexical-stub`.
+  # Tried in order; the first that loads with 3 labels wins, and the winner is
+  # printed at startup. Smaller models are listed first — 186s of grading came
+  # from running the base model on CPU. If none of the small ones exist for
+  # you, the base model at the end is the known-good fallback.
+  model_candidates:
+    - cross-encoder/nli-distilroberta-base
+    - cross-encoder/nli-deberta-v3-small
+    - typeform/distilbert-base-uncased-mnli
+    - MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli
+  batch_size: 16
+  device: cpu
+  # Premises are single sentences; 512 tokens was padding waste.
+  max_length: 192
+  # Below this, stance is recorded as `insufficient` rather than guessed.
+  min_confidence: 0.55
+  # Sentences per document sent to the model. Every sentence would be ~700
+  # CPU inferences per request; a lexical prefilter picks the few worth scoring.
+  max_sentences_per_doc: 2
+  # Blank means use every core. A fixed 4 throttled larger machines.
+  torch_threads: null
+  # Grounding uses a lower bar than stance: a valid paraphrase across several
+  # quotes often scores `neutral`, and the stance threshold deleted every
+  # explanation. Contradiction still fails, which is the property that matters.
+  grounding_min: 0.30
+  # A fact-checker's rating is inherited only if their reviewed claim matches
+  # ours at least this closely. Below it, the fact-check is kept as context
+  # but never as a verdict.
+  # 0.6 was too permissive: fact-checks of "Wuhan Lab Leak Theory CONFIRMED"
+  # and "coronavirus was bioengineered" scored 0.65 against "Covid originated
+  # from China" — related topic, different question.
+  prior_claim_match_min: 0.8
+
+# Fallbacks, tried in order if the primary provider errors or is rate-limited.
+# Tried in order if the primary errors or is rate-limited.
+#
+# Both defaults above were stale and 404'd. Groq's catalogue changes often:
+# run GET /v1/models, take a name from the "groq.usable" list, and uncomment
+# below. Groq is considerably faster than Gemini for triage, so it is worth
+# using as primary once you have a current name.
+fallbacks:
+  triage: []
+  # triage:
+  #   - {provider: groq, model: <paste from /v1/models>}
+  decide: []
+  # decide:
+  #   - {provider: groq, model: <paste from /v1/models>}
+
+retrieval:
+  concurrent: true
+  per_channel_timeout_s: 8
+  max_docs_per_channel: 3
+  # Open web is the only channel with meaningful per-query cost. It runs only
+  # for categories that need it, or as a fallback when nothing else returned.
+  open_web_only_as_fallback: false
