@@ -87,7 +87,17 @@ def compute(
 
     # Every retrieved document merely repeats the claim; none evaluates it.
     # Coverage volume is not corroboration.
-    all_report_only = all(i.role in ("reports", "asserts") for i in items)
+    #
+    # But a primary source stating its own action IS evidence. The Federal
+    # Reserve publishing its rate decision is not "repeating a claim", and
+    # treating it that way abstained on a decision the Fed itself announced.
+    primary = {"prior_check", "definitional", "peer_reviewed"}
+    has_primary = any(
+        i.tier in primary and i.stance in ("supports", "refutes") for i in items
+    )
+    all_report_only = (
+        not has_primary and all(i.role == "reports" for i in items)
+    )
 
     # Sources that all postdate the claim and cluster on one domain are an
     # amplification signature, not independent confirmation.

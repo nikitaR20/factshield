@@ -59,7 +59,9 @@ nli:
   min_confidence: 0.55
   # Sentences per document sent to the model. Every sentence would be ~700
   # CPU inferences per request; a lexical prefilter picks the few worth scoring.
-  max_sentences_per_doc: 2
+  # Raised from 2 now that grading runs in ~3s. Too few candidates meant the
+  # one sentence that actually stated the claim could be missed.
+  max_sentences_per_doc: 4
   # Blank means use every core. A fixed 4 throttled larger machines.
   torch_threads: null
   # Grounding uses a lower bar than stance: a valid paraphrase across several
@@ -95,4 +97,4 @@ retrieval:
   max_docs_per_channel: 3
   # Open web is the only channel with meaningful per-query cost. It runs only
   # for categories that need it, or as a fallback when nothing else returned.
-  open_web_only_as_fallback: false
+  open_web_only_as_fallback: false  

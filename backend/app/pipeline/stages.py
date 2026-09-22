@@ -59,8 +59,11 @@ async def triage(ctx: CaptureContext) -> tuple[TriageOutput, str]:
         )
 
     claims = [
-        SubClaim(id=int(c.get("id", i + 1)),
-                 text=str(c.get("text", "")).strip())
+        SubClaim(
+            id=int(c.get("id", i + 1)),
+            text=str(c.get("text", "")).strip(),
+            attribution_extracted=bool(c.get("attribution_extracted", False)),
+        )
         for i, c in enumerate(data.get("sub_claims", []))
         if str(c.get("text", "")).strip()
     ]
@@ -80,7 +83,9 @@ async def triage(ctx: CaptureContext) -> tuple[TriageOutput, str]:
 # ---------------------------------------------------------------- fast path
 
 def fast_path_verdict(
-    sub_claim: SubClaim, items: list[EvidenceItem]
+    sub_claim: SubClaim,
+    items: list[EvidenceItem],
+    state: EvidenceState | None = None,
 ) -> SubClaimVerdict | None:
     """Skip the verdict model when a fact-checker already published a rating.
 
@@ -109,18 +114,35 @@ def fast_path_verdict(
         return None
 
     supported = top.stance == "supports"
+
+    # Axis 2 is computed, never assumed. Hardcoding "consistent" here meant the
+    # shortcut that saves money also discarded the distinction the system
+    # exists for: a confirmed PROMISE is not a confirmed OUTCOME.
+    if sub_claim.attribution_extracted:
+        standing = "overstated"
+        caveat = (
+            " This confirms the statement was made; it does not establish that"
+            " the promised outcome will occur."
+        )
+    elif state is not None and state.shares_common_origin and state.sources_postdate_claim:
+        standing, caveat = "amplified", ""
+    elif state is not None and state.supporting_predate_refuting:
+        standing, caveat = "outdated", ""
+    else:
+        standing, caveat = "consistent", ""
+
     return SubClaimVerdict(
         sub_claim_id=sub_claim.id,
         sub_claim_text=sub_claim.text,
         claim_verdict="supported" if supported else "refuted",
-        evidence_standing="consistent",
+        evidence_standing=standing,
         support_score=95 if supported else 5,
         score_basis={"source": 1.0, "prior_check": 1.0},
         explanation_pattern="directly_confirmed" if supported else "directly_contradicted",
         explanation=(
             f"This claim has already been fact-checked by "
             f"{top.source_domain} [{top.id}], which rated it "
-            f"{'accurate' if supported else 'false'}."
+            f"{'accurate' if supported else 'false'}.{caveat}"
         ),
         cited_evidence_ids=[top.id],
     )
@@ -186,7 +208,23 @@ async def explain(
 
 # ---------------------------------------------------------------- grounding
 
-def describe_evidence(items: list[EvidenceItem], state: EvidenceState) -> str:
+_DOWNGRADE_REASON = {
+    "quote_omits_context": "The sources show context the claim leaves out.",
+    "subset_stated_as_general": "The sources support a narrower version of the claim than stated.",
+    "timeframe_cherry_picked": "The sources support this only for a narrower period than implied.",
+    "correlation_as_causation": "The sources show an association, not the causal link the claim asserts.",
+    "study_not_human": "The supporting research was not conducted in humans.",
+    "figure_outdated": "The supporting figure has since been superseded.",
+    "source_is_reporting_not_assessing": "The sources report the claim rather than verify it.",
+    "single_origin_amplification": "The supporting sources trace to a single origin.",
+}
+
+
+def describe_evidence(
+    items: list[EvidenceItem],
+    state: EvidenceState,
+    downgrade_pattern: str | None = None,
+) -> str:
     """A factual summary assembled from counts, used when the model produced
     nothing that survived grounding.
 
@@ -230,6 +268,10 @@ def describe_evidence(items: list[EvidenceItem], state: EvidenceState) -> str:
     if not state.expected_tier_present:
         parts.append(
             "No source of the type this claim would require was found.")
+    # Without this, a verdict of "partly supported" sat beside "4 support, 0
+    # contradict" with nothing explaining the gap between them.
+    if downgrade_pattern and downgrade_pattern in _DOWNGRADE_REASON:
+        parts.append(_DOWNGRADE_REASON[downgrade_pattern])
     return " ".join(parts)
 
 

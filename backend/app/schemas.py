@@ -20,7 +20,7 @@ Tier = Literal[
     "definitional",         # the body that sets the rule
     "peer_reviewed",        # journal literature
     "authority",            # recognised institution, no API
-    "independent_analysis",  # CBO, IFS, academic commentary
+    "independent_analysis", # CBO, IFS, academic commentary
     "reporting",            # news
     "low",                  # blogs, forums, content farms
 ]
@@ -29,8 +29,7 @@ Stance = Literal["supports", "refutes", "insufficient", "discusses"]
 Role = Literal["assesses", "reports", "asserts"]
 Channel = Literal["prior_check", "literature", "authority", "open_web"]
 
-ClaimVerdict = Literal["supported", "refuted",
-                       "partly_supported", "unresolved"]
+ClaimVerdict = Literal["supported", "refuted", "partly_supported", "unresolved"]
 EvidenceStanding = Literal[
     "consistent",     # evidence quality matches what the claim implies
     "overstated",     # claim implies stronger backing than exists
@@ -61,6 +60,12 @@ class CaptureContext(BaseModel):
 class SubClaim(BaseModel):
     id: int
     text: str = Field(..., description="Standalone, pronouns resolved")
+    # True when the original selection asserted a FUTURE OUTCOME and this
+    # sub-claim is the underlying attribution. "Trump will give $5,000 to every
+    # citizen" becomes "Trump promised $5,000 to every citizen": the promise is
+    # verifiable, the payment is not. Confirming the promise must not be
+    # presented as confirming the payment.
+    attribution_extracted: bool = False
 
 
 class TriageOutput(BaseModel):
@@ -102,8 +107,7 @@ class EvidenceItem(BaseModel):
     sub_claim_id: int
     url: HttpUrl
     title: str
-    quote: str = Field(...,
-                       description="Verbatim sentence carrying the stance")
+    quote: str = Field(..., description="Verbatim sentence carrying the stance")
     published_date: date | None
     source_domain: str
     channel: Channel

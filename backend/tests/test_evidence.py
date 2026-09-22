@@ -444,3 +444,271 @@ def test_abstention_standing_is_derived_not_hardcoded():
              for i in range(1, 6)]
     state = ev.compute(items, "medical")
     assert ev.standing_for_abstention(state, items) == "amplified"
+
+
+# ------------------------------- promise vs outcome (the second axis's job)
+
+def test_confirmed_promise_is_flagged_overstated():
+    """Regression: "Trump will give $5,000 to every citizen" was verified as a
+    PROMISE and reported with evidence_standing "consistent".
+
+    The promise is real; the payment is not established. Axis 1 says the
+    attribution holds, axis 2 must say the claim implies more than the evidence
+    supports. This is the exact distinction the second axis exists for."""
+    from app.pipeline import stages
+    from app.schemas import SubClaim
+
+    check = item(
+        id=1, tier="prior_check", channel="prior_check", role="assesses",
+        stance="supports", stance_confidence=0.95, claim_match=0.98,
+        url="https://snopes.com/x", source_domain="snopes.com",
+    )
+    claim = SubClaim(
+        id=1,
+        text="Donald Trump promised $5,000 to every US adult.",
+        attribution_extracted=True,
+    )
+    state = ev.compute([check], "political")
+    v = stages.fast_path_verdict(claim, [check], state)
+
+    assert v is not None
+    assert v.claim_verdict == "supported"
+    assert v.evidence_standing == "overstated"
+    assert "does not establish" in v.explanation
+
+
+def test_ordinary_confirmed_claim_stays_consistent():
+    from app.pipeline import stages
+    from app.schemas import SubClaim
+
+    check = item(
+        id=1, tier="prior_check", channel="prior_check", role="assesses",
+        stance="supports", stance_confidence=0.95, claim_match=0.98,
+        url="https://snopes.com/x", source_domain="snopes.com",
+    )
+    claim = SubClaim(id=1, text="The Eiffel Tower is in Paris.")
+    state = ev.compute([check], "general")
+    v = stages.fast_path_verdict(claim, [check], state)
+    assert v.evidence_standing == "consistent"
+
+
+def test_attribution_flag_also_applies_without_fast_path():
+    state = ev.compute([], "political")
+    _, standing = scoring.derive_verdict(
+        90, state, [], attribution_extracted=True)
+    assert standing == "overstated"
+
+
+# ------------------------------------------------- role, denylist, URL dates
+
+def test_role_is_judged_on_the_quote_not_the_document():
+    """Regression: role was computed from the whole document. A long article
+    contains "said" somewhere, so nearly everything was marked `reports`,
+    which tripped the "everyone is just repeating this" abstention and killed
+    valid claims."""
+    from app.pipeline.grading import assign_role
+
+    # The sentence used as evidence states the fact directly.
+    assert assign_role(
+        "The Federal Reserve raised interest rates by a quarter point on Wednesday."
+    ) == "asserts"
+    # A sentence that merely relays someone else's statement.
+    assert assign_role(
+        "According to officials, the policy said to be under review."
+    ) == "reports"
+    # A sentence that evaluates.
+    assert assign_role(
+        "Our analysis found no evidence supporting the claim.") == "assesses"
+
+
+def test_primary_source_is_not_mere_repetition():
+    """A central bank publishing its own rate decision is not "repeating a
+    claim". Treating it that way abstained on a decision the Fed announced."""
+    primary = item(id=1, tier="definitional", channel="authority",
+                   role="asserts", stance="supports",
+                   url="https://federalreserve.gov/x", source_domain="federalreserve.gov")
+    press = [item(id=i, tier="authority", role="reports", stance="supports",
+                  url=f"https://n{i}.com/x", source_domain=f"n{i}.com")
+             for i in range(2, 5)]
+    state = ev.compute([primary] + press, "financial")
+    assert state.all_sources_report_only is False
+    assert ev.should_abstain(state, [primary] + press) is None
+
+
+def test_social_and_prediction_markets_are_never_evidence():
+    """A Facebook video and a Polymarket page appeared as evidence for a
+    Federal Reserve decision. Trading odds measure what bettors expect, not
+    what happened."""
+    from app.retrieval import _denied
+
+    for bad in ("facebook.com", "www.youtube.com", "polymarket.com",
+                "reddit.com", "x.com", "kalshi.com"):
+        assert _denied(bad), bad
+    for good in ("reuters.com", "federalreserve.gov", "who.int", "snopes.com"):
+        assert not _denied(good), good
+
+
+def test_dates_recovered_from_urls():
+    """Institutional pages often expose no date to the search API, so a stale
+    2026-04 FOMC minutes page looked as current as this week's statement — and
+    contradicted the claim with no recency penalty."""
+    from datetime import date as _date
+
+    from app.retrieval import _date_from_url
+
+    assert _date_from_url(
+        "https://www.federalreserve.gov/monetarypolicy/fomcminutes20260429.htm"
+    ) == _date(2026, 4, 29)
+    assert _date_from_url(
+        "https://www.nytimes.com/live/2026/09/16/business/fed-meeting"
+    ) == _date(2026, 9, 16)
+    assert _date_from_url("https://www.who.int/news-room/questions") is None
+
+
+# ------------------------------- the model may weaken, never strengthen
+
+def test_mismatch_pattern_downgrades_a_supported_verdict():
+    """Regression: "The Fed confirmed more hikes are coming" scored 97 and
+    `supported`, on the strength of the Fed's note about THIS week's hike —
+    topically close, semantically wrong.
+
+    The explanation model diagnosed it correctly as `subset_stated_as_general`.
+    That signal now weakens the verdict."""
+    v, st = scoring.apply_pattern_downgrade(
+        "supported", "consistent", "subset_stated_as_general"
+    )
+    assert v == "partly_supported"
+    assert st == "overstated"
+
+
+def test_ordinary_pattern_changes_nothing():
+    v, st = scoring.apply_pattern_downgrade(
+        "supported", "consistent", "directly_confirmed")
+    assert (v, st) == ("supported", "consistent")
+    v, st = scoring.apply_pattern_downgrade("refuted", "consistent", None)
+    assert (v, st) == ("refuted", "consistent")
+
+
+def test_downgrade_never_strengthens():
+    """The model must not be able to manufacture support. Every mismatch
+    pattern can only move a verdict downwards."""
+    for pattern in scoring._MISMATCH_PATTERNS:
+        v, _ = scoring.apply_pattern_downgrade(
+            "unresolved", "contested", pattern)
+        assert v == "unresolved"
+        v, _ = scoring.apply_pattern_downgrade(
+            "refuted", "consistent", pattern)
+        assert v == "refuted"
+
+
+# --------------------------------- dates are arithmetic, not entailment
+
+def test_explicit_dates_stripped_before_stance_judging():
+    """Regression: "raised interest rates during the week of September 17,
+    2026" scored 0.066 entailment against CNN's near-identical "raised
+    interest rates by a quarter of a percentage point".
+
+    The assertion matched perfectly; the date phrasing did not. Sources say
+    "Wednesday", "September 16", "effective September 17" — none of which an
+    entailment model reconciles. The model judges meaning; the code checks
+    dates."""
+    from app.pipeline.grading import strip_explicit_date as strip
+
+    assert strip("The Federal Reserve raised interest rates during the week of "
+                 "September 17, 2026.") == "The Federal Reserve raised interest rates"
+    assert strip(
+        "Pluto was reclassified on August 24, 2006.") == "Pluto was reclassified"
+
+    # Place names and figures must survive untouched.
+    assert "Wuhan, China" in strip(
+        "The COVID-19 outbreak was first detected in Wuhan, China.")
+    assert "$5,000" in strip("Trump promised $5,000 to every US adult.")
+
+    # A claim that is nothing but a date must not be emptied.
+    assert strip("September 17, 2026").strip()
+
+
+def test_headline_is_scored_as_evidence():
+    """Regression: a Reuters article titled "Fed forecasts see latest hike
+    followed by another before end year" was used only as premise context. The
+    body sentence actually scored was about 2029 rates and came back `refutes`
+    at 0.884, flipping the verdict."""
+    from app.pipeline.grading import _candidate_sentences
+
+    title = "Fed forecasts see latest hike followed by another before end year"
+    body = ("Their new forecasts sees rates coming back down in 2028. "
+            "The federal funds rate is projected to stand between 3.5% and 3.75% in 2029.")
+    out = _candidate_sentences(
+        title, body, "The Fed expects another rate hike this year", 3)
+    assert out[0] == title
+
+
+def test_junk_titles_are_not_scored():
+    from app.pipeline.grading import _candidate_sentences
+
+    out = _candidate_sentences("Skip to main content", "A real sentence about the claim here.",
+                               "the claim", 2)
+    assert not any("Skip to main" in s for s in out)
+
+
+# ------------------------------- reporting IS the evidence for attributions
+
+def test_reporting_counts_fully_for_attribution_claims():
+    """Regression: "Trump stated the US will control Greenland's security" —
+    BBC, the NYT and Reuters all reported him saying it, and it scored 0.316
+    against a 0.35 threshold.
+
+    The `reports` discount stops repetition counting as confirmation of a
+    claim's CONTENT. But an attribution claim is about the utterance itself,
+    and a credible outlet reporting that it was said is the primary evidence."""
+    from datetime import date as _date
+
+    reporters = [
+        item(id=i, tier="authority", role="reports", stance="supports",
+             stance_confidence=0.9, published_date=_date(2026, 9, 18),
+             url=f"https://n{i}.com/x", source_domain=f"n{i}.com")
+        for i in range(1, 4)
+    ]
+    today = _date(2026, 9, 20)
+
+    content, _ = scoring.compute_score(reporters, "political", 3, today)
+    attribution, _ = scoring.compute_score(
+        reporters, "political", 3, today, attribution_extracted=True
+    )
+    assert content is None            # repetition does not confirm content
+    assert attribution == 100          # but it does confirm the statement
+
+
+def test_attribution_does_not_rescue_low_tier_reporting():
+    """The fix lifts the ROLE weight, not the tier. Three blogs reporting a
+    quote are still three blogs."""
+    from datetime import date as _date
+
+    blogs = [
+        item(id=i, tier="low", role="reports", stance="supports",
+             stance_confidence=0.9, published_date=_date(2026, 9, 18),
+             url=f"https://b{i}.com/x", source_domain=f"b{i}.com")
+        for i in range(1, 4)
+    ]
+    score, _ = scoring.compute_score(
+        blogs, "political", 3, _date(2026, 9, 20), attribution_extracted=True
+    )
+    assert score is None
+
+
+def test_downgrade_is_explained_in_fallback_text():
+    """Regression: "partly supported" appeared beside "4 support the claim, 0
+    contradict it" and a score of 100, with nothing explaining the gap. The
+    model's reason had been deleted by grounding."""
+    from app.pipeline.stages import describe_evidence
+
+    items = [item(id=i, tier="authority", stance="supports",
+                  url=f"https://n{i}.com/x", source_domain=f"n{i}.com")
+             for i in range(1, 4)]
+    state = ev.compute(items, "political")
+
+    plain = describe_evidence(items, state)
+    explained = describe_evidence(
+        items, state, downgrade_pattern="quote_omits_context")
+    assert "context" not in plain
+    assert "context the claim leaves out" in explained

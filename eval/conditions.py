@@ -80,12 +80,14 @@ async def run_retrieval_condition(record: dict, condition: str) -> dict:
     results = []
     next_id = 1
     for sub in sub_claims:
-        raw = record["documents"].get(str(sub.id)) or record["documents"].get(sub.id) or []
+        raw = record["documents"].get(
+            str(sub.id)) or record["documents"].get(sub.id) or []
         docs = _filter_docs(raw, condition)
         items = await grading.grade(docs, sub.text, sub.id, category, jurisdiction, start_id=next_id)
         next_id += len(items)
 
-        state = ev.compute(items, category, jurisdiction, record.get("page_published"))
+        state = ev.compute(items, category, jurisdiction,
+                           record.get("page_published"))
         reason = ev.should_abstain(state, items)
         if reason:
             results.append({
@@ -106,8 +108,13 @@ async def run_retrieval_condition(record: dict, condition: str) -> dict:
             })
             continue
 
-        score, basis = scoring.compute_score(items, category, state.n_independent_domains)
-        verdict, standing = scoring.derive_verdict(score, state, items)
+        score, basis = scoring.compute_score(
+            items, category, state.n_independent_domains,
+            attribution_extracted=sub.attribution_extracted,
+        )
+        verdict, standing = scoring.derive_verdict(
+            score, state, items, attribution_extracted=sub.attribution_extracted
+        )
         results.append({
             "condition": condition, "sub_claim_id": sub.id,
             "claim_verdict": verdict, "evidence_standing": standing,

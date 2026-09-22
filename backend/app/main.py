@@ -243,7 +243,7 @@ async def check(
         # rule: they are a human expert who already resolved it. Checking the
         # rules first meant a claim backed by a matching Snopes verdict could
         # still be abstained on.
-        fast = stages.fast_path_verdict(claim, items)
+        fast = stages.fast_path_verdict(claim, items, state)
         if fast is not None:
             fast_path_used = True
             verdicts.append(fast)
@@ -268,12 +268,30 @@ async def check(
             continue
 
         score, basis = scoring.compute_score(
-            items, tri.category, state.n_independent_domains)
-        verdict, standing = scoring.derive_verdict(score, state, items)
+            items, tri.category, state.n_independent_domains,
+            attribution_extracted=claim.attribution_extracted,
+        )
+        verdict, standing = scoring.derive_verdict(
+            score, state, items, attribution_extracted=claim.attribution_extracted
+        )
 
         pattern, explanation, cited, _ = await stages.explain(
             claim, items, state, verdict, standing, max_items=max_items
         )
+
+        # One-directional: the model may weaken the computed verdict, never
+        # strengthen it. See scoring.apply_pattern_downgrade.
+        before = verdict
+        verdict, standing = scoring.apply_pattern_downgrade(
+            verdict, standing, pattern)
+        downgraded = verdict != before
+        if downgraded:
+            # The score measures evidence AGREEMENT and stays as computed; the
+            # verdict now also reflects a semantic check the arithmetic cannot
+            # see. Recording why keeps "100/100, partly supported" explainable
+            # instead of looking like a contradiction.
+            basis = {**basis, "downgraded_from": 1.0,
+                     "downgrade_pattern": pattern}
         explanation, cited, total, dropped = stages.ground(explanation, items)
         grounding_total += total
         grounding_dropped += dropped
@@ -282,7 +300,9 @@ async def check(
         # computed description rather than an empty box — it is assembled from
         # counts, so it cannot fabricate.
         if not explanation.strip():
-            explanation = stages.describe_evidence(items, state)
+            explanation = stages.describe_evidence(
+                items, state, downgrade_pattern=pattern if downgraded else None
+            )
             cited = [i.id for i in items[:3]]
 
         verdicts.append(

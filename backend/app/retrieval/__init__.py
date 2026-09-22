@@ -29,6 +29,24 @@ import httpx
 from ..config import env, models, pack_for
 from ..schemas import Channel, RawDocument
 
+# Never evidence, whatever the search engine returns. Social platforms are
+# user-generated; prediction markets publish trading odds, which are a measure
+# of what bettors expect, not of what happened. A Polymarket page and a
+# Facebook video both appeared as "evidence" for a Federal Reserve decision.
+DENY_DOMAINS = {
+    "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com",
+    "youtube.com", "youtu.be", "reddit.com", "pinterest.com", "quora.com",
+    "medium.com", "substack.com", "linkedin.com", "threads.net",
+    "polymarket.com", "kalshi.com", "predictit.org", "metaculus.com",
+    "answers.com", "ask.com", "wikihow.com", "scribd.com", "issuu.com",
+}
+
+
+def _denied(domain: str) -> bool:
+    d = domain.lower().removeprefix("www.")
+    return any(d == bad or d.endswith("." + bad) for bad in DENY_DOMAINS)
+
+
 _UA = {
     "User-Agent": "FactShield/2.0 (academic research; contact in repo README)"}
 
@@ -54,6 +72,40 @@ def _parse_abstracts(xml: str) -> dict[str, str]:
         if joined:
             out[pmid] = joined
     return out
+
+
+_URL_DATE = re.compile(
+    r"(?:^|[/\-_])(20\d{2})[/\-_]?(0[1-9]|1[0-2])[/\-_]?(0[1-9]|[12]\d|3[01])(?:[/\-_]|$)")
+_URL_YM = re.compile(r"(?:^|[/\-_])(20\d{2})[/\-_](0[1-9]|1[0-2])(?:[/\-_]|$)")
+
+
+def _date_from_url(url: str) -> date | None:
+    """Recover a publication date from the URL when the search API gives none.
+
+    Institutional pages routinely expose no date, so a 2026-04 FOMC minutes
+    page and this week's statement looked equally current — and the stale one
+    contradicted the claim with no recency penalty applied.
+    """
+    m = _URL_DATE.search(url)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    m = _URL_YM.search(url)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), 1)
+        except ValueError:
+            pass
+    # Bare 8-digit form with no separators, e.g. fomcminutes20260429.htm
+    m = re.search(r"(20\d{2})(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])", url)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    return None
 
 
 def _canonical(url: str) -> str:
@@ -228,7 +280,7 @@ async def _tavily(claim: str, limit: int, include: list[str] | None, channel: Ch
         return []
     payload = {
         "api_key": key, "query": claim, "max_results": limit,
-        "search_depth": "basic",  # 'advanced' costs more credits and 2-5s
+        "search_depth": "advanced",  # 2 credits, but returns real page text
     }
     if include:
         payload["include_domains"] = include
@@ -244,7 +296,8 @@ async def _tavily(claim: str, limit: int, include: list[str] | None, channel: Ch
         RawDocument(
             url=x["url"], title=x.get("title", "")[:300],
             text=x.get("content", "")[:4000],
-            published_date=_parse_date(x.get("published_date")),
+            published_date=_parse_date(
+                x.get("published_date")) or _date_from_url(x["url"]),
             source_domain=_domain(x["url"]), channel=channel,
         )
         for x in results if x.get("url")
@@ -297,6 +350,8 @@ async def retrieve(claim: str, category: str, jurisdiction: str | None = None) -
         if isinstance(res, Exception):
             continue
         for d in res:
+            if _denied(d.source_domain):
+                continue
             # http/https/www variants of one page are one source, not three.
             key = _canonical(str(d.url))
             if key in seen:

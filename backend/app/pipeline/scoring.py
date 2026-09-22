@@ -43,13 +43,31 @@ def recency_factor(published: date | None, category: str, today: date | None = N
     return 0.5 ** (age_days / half_life)
 
 
-def item_weight(item: EvidenceItem, category: str, n_domains: int, today: date | None = None) -> float:
+def item_weight(
+    item: EvidenceItem,
+    category: str,
+    n_domains: int,
+    today: date | None = None,
+    attribution_extracted: bool = False,
+) -> float:
     cfg = _cfg()
     if item.retracted and cfg.get("scoring", {}).get("exclude_retracted", True):
         return 0.0
 
     tier_w = cfg.get("tier_weights", {}).get(item.tier, 0.1)
     role_w = cfg.get("role_weights", {}).get(item.role, 0.2)
+
+    # The `reports` discount stops fifty outlets repeating a politician's claim
+    # from counting as fifty confirmations that the claim is TRUE. That is right
+    # for content claims.
+    #
+    # For an ATTRIBUTION claim — "X stated that Y" — the claim is about the
+    # utterance itself. A credible outlet reporting that X said it is not
+    # repetition; it is the primary evidence. BBC, the NYT and Reuters all
+    # reporting Trump's Greenland statement scored 0.316 against a 0.35
+    # threshold, because the rule penalised exactly the evidence that counts.
+    if attribution_extracted and item.role == "reports":
+        role_w = cfg.get("role_weights", {}).get("assesses", 1.0)
     rec_w = recency_factor(item.published_date, category, today)
 
     # Independence damping: ten documents from two domains should not outweigh
@@ -64,6 +82,7 @@ def compute_score(
     category: str,
     n_domains: int,
     today: date | None = None,
+    attribution_extracted: bool = False,
 ) -> tuple[int | None, dict[str, float]]:
     """Return (score, basis). Score is None when evidence is too thin to
     support any number at all."""
@@ -72,7 +91,7 @@ def compute_score(
 
     support = refute = 0.0
     for it in items:
-        w = item_weight(it, category, n_domains, today)
+        w = item_weight(it, category, n_domains, today, attribution_extracted)
         if it.stance == "supports":
             support += w
         elif it.stance == "refutes":
@@ -100,6 +119,7 @@ def derive_verdict(
     score: int | None,
     state: EvidenceState,
     items: list[EvidenceItem],
+    attribution_extracted: bool = False,
 ) -> tuple[ClaimVerdict, EvidenceStanding]:
     """Map computed evidence into the two axes.
 
@@ -124,9 +144,17 @@ def derive_verdict(
         verdict = "partly_supported"
 
     # ---- axis 2, most specific first
+    #
+    # An extracted attribution is overstated by construction: the user's
+    # sentence asserted an outcome, the evidence only establishes that someone
+    # said it would happen.
+    if attribution_extracted and verdict == "supported":
+        return verdict, "overstated"
+
     top_tiers = {"prior_check", "definitional", "peer_reviewed", "authority"}
     top_items = [i for i in items if i.tier in top_tiers]
-    top_stances = {i.stance for i in top_items if i.stance in ("supports", "refutes")}
+    top_stances = {i.stance for i in top_items if i.stance in (
+        "supports", "refutes")}
 
     if state.supporting_predate_refuting:
         standing: EvidenceStanding = "outdated"
@@ -146,4 +174,46 @@ def derive_verdict(
     else:
         standing = "consistent"
 
+    return verdict, standing
+
+
+# Patterns the explanation model may choose that mean "the evidence does not
+# establish the claim AS STATED", even when the stance arithmetic came out
+# supportive.
+_MISMATCH_PATTERNS = {
+    "subset_stated_as_general",
+    "timeframe_cherry_picked",
+    "correlation_as_causation",
+    "quote_omits_context",
+    "study_not_human",
+    "figure_outdated",
+    "source_is_reporting_not_assessing",
+    "single_origin_amplification",
+}
+
+
+def apply_pattern_downgrade(
+    verdict: ClaimVerdict,
+    standing: EvidenceStanding,
+    pattern: str | None,
+) -> tuple[ClaimVerdict, EvidenceStanding]:
+    """Let the explanation model WEAKEN a verdict, never strengthen one.
+
+    Sentence-level entailment matches topic more readily than assertion. The
+    Federal Reserve's note about raising rates this week scored 0.862 as
+    `supports` for the claim "the Fed confirmed more hikes are coming" — close
+    in subject, wrong in substance, and the arithmetic had no way to see it.
+
+    The model did see it: given the same evidence it chose
+    `subset_stated_as_general`. Using that as a one-directional check keeps the
+    verdict computed rather than generated — the model cannot manufacture
+    support, only flag that the numbers overstate what the evidence shows.
+    """
+    if not pattern or pattern not in _MISMATCH_PATTERNS:
+        return verdict, standing
+
+    if verdict == "supported":
+        verdict = "partly_supported"
+    if standing == "consistent":
+        standing = "overstated"
     return verdict, standing

@@ -52,6 +52,36 @@ def sentences(text: str, limit: int = 40) -> list[str]:
     return parts[:limit] or ([text.strip()] if text and text.strip() else [])
 
 
+_CLAIM_DATE = re.compile(
+    r"\s*(?:\b(?:in|on|during|as of|by)\b\s+)?"
+    r"(?:the\s+)?(?:week\s+of\s+)?"
+    r"(?:\b(?:January|February|March|April|May|June|July|August|September|October|"
+    r"November|December)\b\s+\d{1,2}(?:st|nd|rd|th)?,?\s*(?:20\d{2})?"
+    r"|\d{1,2}\s+\b(?:January|February|March|April|May|June|July|August|September|"
+    r"October|November|December)\b,?\s*(?:20\d{2})?"
+    r"|\b20\d{2}-\d{2}-\d{2}\b)",
+    re.I,
+)
+
+
+def strip_explicit_date(claim: str) -> str:
+    """Remove an explicit calendar date from a claim before stance judging.
+
+    A claim resolved to "raised interest rates during the week of September 17,
+    2026" scored 0.066 entailment against CNN's near-identical "raised interest
+    rates by a quarter of a percentage point" — the assertion matches perfectly
+    and the date phrasing does not. Sources say "Wednesday", "September 16",
+    "effective September 17"; the model cannot reconcile those.
+
+    So the model judges the ASSERTION and the code checks the DATE, which is
+    the same division of labour the rest of the pipeline uses: arithmetic for
+    anything computable, the model only for meaning.
+    """
+    out = _CLAIM_DATE.sub(" ", claim)
+    out = re.sub(r"\s{2,}", " ", out).strip(" ,.")
+    return out or claim
+
+
 def _candidates(text: str, claim: str, top_k: int = 4) -> list[str]:
     """Pick the sentences worth running NLI on.
 
@@ -78,6 +108,24 @@ def _candidates(text: str, claim: str, top_k: int = 4) -> list[str]:
 
     scored.sort(key=lambda x: x[0], reverse=True)
     return [s for score, s in scored[:top_k] if score > 0] or sentences(text)[:1]
+
+
+def _candidate_sentences(doc_title: str, text: str, claim: str, top_k: int) -> list[str]:
+    """Headline first, then body sentences.
+
+    A Reuters article titled "Fed forecasts see latest hike followed by another
+    before end year" is the clearest statement of the claim in the whole
+    document. It was previously used only as premise context, while the
+    sentence actually scored was about 2029 rates — and came back `refutes` at
+    0.884, flipping the verdict.
+    """
+    out: list[str] = []
+    title = (doc_title or "").strip()
+    if len(title) > 20 and not _JUNK.search(title):
+        out.append(title)
+    out.extend(_candidates(text, claim, top_k))
+    seen: set[str] = set()
+    return [x for x in out if not (x in seen or seen.add(x))]
 
 
 def assign_tier(doc: RawDocument, category: str, jurisdiction: str | None) -> Tier:
@@ -184,18 +232,34 @@ async def grade(
     min_conf = models().get("nli", {}).get("min_confidence", 0.55)
 
     max_per_doc = models().get("nli", {}).get("max_sentences_per_doc", 4)
+    # Stance is judged against the assertion; the date is checked separately in
+    # evidence_state by comparing publication dates.
+    stance_claim = strip_explicit_date(claim)
+
     pairs: list[tuple[str, str]] = []
     index: list[tuple[int, str]] = []
     for di, doc in enumerate(docs):
-        for sent in _candidates(doc.text, claim, max_per_doc):
-            # The TITLE carries scope the sentence alone does not. A WHO page
-            # titled "first cases confirmed in Europe" contains the sentence
-            # "The first cases of 2019-nCoV have been reported in the European
-            # Region" — which, read without its title, appears to contradict
-            # "first detected in Wuhan". With the title attached it plainly
-            # does not.
-            premise = f"{doc.title.strip()}. {sent}" if doc.title else sent
-            pairs.append((premise[:1200], claim))
+        for sent in _candidate_sentences(doc.title, doc.text, stance_claim, max_per_doc):
+            # The premise carries three things the sentence alone does not.
+            #
+            # TITLE gives scope. A WHO page titled "first cases confirmed in
+            # Europe" contains "The first cases of 2019-nCoV have been reported
+            # in the European Region" — read without its title that appears to
+            # contradict "first detected in Wuhan". With it, plainly not.
+            #
+            # DATE resolves relative time. A WSJ article saying "the Federal
+            # Reserve raised rates Wednesday" scored `insufficient` against the
+            # claim "raised rates in the week of September 17, 2026", because
+            # nothing in the sentence connects "Wednesday" to that week. Three
+            # strong sources contributed zero weight as a result.
+            parts = []
+            if doc.published_date:
+                parts.append(f"Published {doc.published_date.isoformat()}.")
+            if doc.title:
+                parts.append(f"{doc.title.strip()}.")
+            parts.append(sent)
+            premise = " ".join(parts)
+            pairs.append((premise[:1200], stance_claim))
             index.append((di, sent))
 
     if not pairs:
@@ -275,8 +339,13 @@ async def grade(
                 channel=doc.channel,
                 tier=assign_tier(doc, category, jurisdiction),
                 stance=stance,
+                # Role is judged on the SENTENCE being used as evidence, not
+                # the whole document. A long article contains "said" somewhere,
+                # so scanning the full text marked almost everything as
+                # `reports` — which then tripped the "everyone is just
+                # repeating this" abstention and killed valid claims.
                 role="assesses" if doc.channel == "prior_check" else assign_role(
-                    doc.text),
+                    sent),
                 stance_confidence=round(float(conf), 3),
                 claim_match=claim_match,
                 retracted=doc.retracted,

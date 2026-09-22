@@ -52,7 +52,12 @@ political:
   authority:
     - reuters.com
     - apnews.com
+    - ap.org
     - bbc.co.uk
+    - bbc.com
+    - theguardian.com
+    - nytimes.com
+    - washingtonpost.com
   jurisdictions:
     US:
       adapters: [factcheck, federal_register]
@@ -80,12 +85,27 @@ political:
 financial:
   adapters: [factcheck]
   expected_tiers: [prior_check, definitional, authority, reporting]
-  authority:
+  # Regulators publish the decision; the financial press explains it. Listing
+  # only regulators meant Reuters, the NYT and Bloomberg all fell to the `low`
+  # tier and carried almost no weight.
+  definitional:
     - sec.gov
     - federalreserve.gov
     - bankofengland.co.uk
+    - ecb.europa.eu
+    - bis.org
+    - treasury.gov
     - imf.org
     - worldbank.org
+  authority:
+    - reuters.com
+    - apnews.com
+    - bloomberg.com
+    - ft.com
+    - wsj.com
+    - nytimes.com
+    - economist.com
+    - cnbc.com
   use_open_web: true
 
 breaking_news:
@@ -96,8 +116,10 @@ breaking_news:
   authority:
     - reuters.com
     - apnews.com
+    - ap.org
     - afp.com
     - bbc.co.uk
+    - bbc.com
   use_open_web: true
   min_independent_domains: 2
 
@@ -107,7 +129,10 @@ general:
   authority:
     - reuters.com
     - apnews.com
+    - ap.org
     - bbc.co.uk
+    - bbc.com
     - snopes.com
     - fullfact.org
+    - politifact.com
   use_open_web: true
