@@ -56,9 +56,14 @@ python -m pytest study/tests -q
 - **Retrieval category.** The product chooses a retrieval category with an LLM
   triage call. The study cannot call triage, so it maps each claim's `domain`
   to a category with a fixed table in `config.yaml`.
+- **Search concepts and truncation.** Medical/science claims may carry
+  hand-written `search_concepts` for PubMed. Each passage records PubMed's
+  `key_findings` and whether they survived truncation to
+  `max_chars_per_passage`; packs where they did not get a warning.
 - **Mixed-model fit.** statsmodels' binomial mixed model is Bayesian. Its
-  variational fit under-covered badly on synthetic data (about 66% for nominal
-  95%); the Laplace fit covered at 94–96%. Laplace is the default.
+  variational fit under-covered badly on synthetic data (69–76% for nominal
+  95%, and a true null called non-zero 25–31% of the time); the Laplace fit
+  covered at 96–99% with 1% false positives. Laplace is the default.
 - **Live search** is a separate mode, separate output file, `live_search=true`
   on every row, never pooled with closed-book rows.
 - **`STUDY_CONFIG`** points the scripts at another config for dry runs; any row

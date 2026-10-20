@@ -39,8 +39,10 @@ def study_paths(tmp_path, monkeypatch):
 
 @pytest.fixture
 def fake_retriever():
-    async def r(claim, category, jurisdiction):
+    async def r(claim, category, jurisdiction, concepts=None):
+        r.calls.append({"claim": claim, "category": category, "concepts": concepts})
         return fake_docs(claim)
+    r.calls = []
     return r
 
 

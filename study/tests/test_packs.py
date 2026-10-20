@@ -25,7 +25,7 @@ def test_unretrievable_claim_is_flagged(study_paths, fake_retriever):
 
 
 def test_empty_retrieval_is_flagged(study_paths):
-    async def nothing(*a):
+    async def nothing(*a, **k):
         return []
     asyncio.run(packs.build_all({"t001"}, None, nothing))
     assert packs.load_pack("t001")["flags"] == ["empty_pack"]
@@ -68,3 +68,35 @@ def test_tampering_is_detected(study_paths, fake_retriever):
     with pytest.raises(packs.PackError, match="modified"):
         packs.load_pack("t001")
     assert packs.verify() == 1
+
+
+def test_search_concepts_passed_through_and_recorded(study_paths, fake_retriever):
+    from study.common import path
+    f = path("claims") / "fixture.jsonl"
+    rows = [json.loads(l) for l in f.read_text().splitlines()]
+    rows[0]["search_concepts"] = [["sales tax", "VAT"], ["Exampleton"]]
+    f.write_text("\n".join(json.dumps(r) for r in rows) + "\n")
+    asyncio.run(packs.build_all({"t001", "t002"}, None, fake_retriever))
+    by_claim = {c["claim"][:60]: c["concepts"] for c in fake_retriever.calls}
+    assert [["sales tax", "VAT"], ["Exampleton"]] in by_claim.values()
+    assert None in by_claim.values()                 # claim without the field
+    assert packs.load_pack("t001")["retrieval"]["search_concepts"][1] == ["Exampleton"]
+
+
+def test_truncated_key_findings_warned_not_excluded(study_paths, monkeypatch):
+    long_text = "Background sentence. " * 120 + "CONCLUSION: the effect was null."
+
+    async def pubmed_like(*a, **k):
+        return [{"url": "https://pubmed.ncbi.nlm.nih.gov/1/", "title": "Review",
+                 "text": long_text, "key_findings": "CONCLUSION: the effect was null.",
+                 "published_date": "2025-01-01", "source_domain": "pubmed.ncbi.nlm.nih.gov",
+                 "channel": "literature"},
+                {"url": "https://pubmed.ncbi.nlm.nih.gov/2/", "title": "Short",
+                 "text": "Short abstract. It worked.", "key_findings": "It worked.",
+                 "published_date": "2025-01-01", "source_domain": "pubmed.ncbi.nlm.nih.gov",
+                 "channel": "literature"}]
+
+    asyncio.run(packs.build_all({"t001"}, None, pubmed_like))
+    p = packs.load_pack("t001")
+    assert [x["key_findings_in_text"] for x in p["passages"]] == [False, True]
+    assert p["warnings"] == ["key_findings_truncated:P1"] and p["flags"] == []

@@ -15,6 +15,16 @@ pack records rather than hides:
   * `retrieve` needs a category. The product gets it from an LLM triage step,
     which the study must not call, so the category comes from the claim's
     `domain` through a fixed table in config.yaml.
+  * Since main@451df3f, `retrieve` also takes `concepts` (synonym groups
+    ANDed into the PubMed query). The product gets them from triage; the study
+    takes them from an OPTIONAL hand-written `search_concepts` field on the
+    claim. Without it, PubMed falls back to keyword extraction. What was used
+    is recorded in the pack.
+  * PubMed documents carry `key_findings` (results + conclusions). Those sit
+    at the END of an abstract, and passages are cut to max_chars_per_passage,
+    so the conclusion can be cut off. The pack records the findings and
+    whether they survived the cut, and warns when they did not. What the model
+    sees is not changed silently: that is a stimulus decision.
   * `retrieve` swallows every channel failure and returns fewer documents. A
     missing TAVILY_API_KEY therefore looks exactly like "the web had nothing".
     The pack lists which channels were attempted and which keys were present,
@@ -37,7 +47,7 @@ from app.config import env, pack_for
 from .common import (DurableAppender, config, load_claims, now_iso, path,
                      provenance, read_jsonl, sha256_json)
 
-Retriever = Callable[[str, str, "str | None"], Awaitable[list]]
+Retriever = Callable[..., Awaitable[list]]   # (claim, category, jurisdiction, concepts=None)
 
 
 class PackError(RuntimeError):
@@ -90,21 +100,26 @@ def _flags(claim: dict, passages: list[dict], attempted: dict) -> list[str]:
     return flags
 
 
-async def _default_retriever(claim: str, category: str, jurisdiction: str | None) -> list:
+async def _default_retriever(claim: str, category: str, jurisdiction: str | None,
+                             concepts: list[list[str]] | None = None) -> list:
     from app.retrieval import retrieve
-    return await retrieve(claim, category, jurisdiction)
+    return await retrieve(claim, category, jurisdiction, concepts=concepts)
 
 
 async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
     cfg = config()["packs"]
     category = category_for(claim.get("domain", ""))
     attempted = _attempted_channels(category)
-    docs = await (retriever or _default_retriever)(claim["claim"], category, None)
+    concepts = claim.get("search_concepts") or None
+    docs = await (retriever or _default_retriever)(claim["claim"], category, None,
+                                                    concepts=concepts)
 
     passages = []
     for i, d in enumerate(docs[: cfg["max_passages"]], 1):
         d = d.model_dump(mode="json") if hasattr(d, "model_dump") else dict(d)
         text = d.get("text") or ""
+        kept = text[: cfg["max_chars_per_passage"]]
+        findings = d.get("key_findings")
         passages.append({
             "pid": f"P{i}",
             "url": str(d.get("url")),
@@ -112,9 +127,12 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
             "published_date": d.get("published_date"),
             "source_domain": d.get("source_domain"),
             "channel": d.get("channel"),
-            "text": text[: cfg["max_chars_per_passage"]],
+            "text": kept,
             "text_truncated": len(text) > cfg["max_chars_per_passage"],
             "text_chars_original": len(text),
+            # Not shown to the model; recorded so truncation loss is measurable.
+            "key_findings": findings,
+            "key_findings_in_text": (findings.strip() in kept) if findings else None,
         })
 
     pack = {
@@ -128,6 +146,7 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
             "n_docs_returned": len(docs),
             "n_docs_kept": len(passages),
             "docs_per_channel": dict(Counter(p["channel"] for p in passages)),
+            "search_concepts": concepts,
         },
         # Per-provider retrievability of the claim's SOURCE, as recorded in the
         # claim set. The pack cannot measure this itself: it would need each
@@ -136,6 +155,9 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
         "passages": passages,
     }
     pack["flags"] = _flags(claim, passages, attempted)
+    # Warnings are reported but do not exclude the claim (flags do).
+    lost = [p["pid"] for p in passages if p["key_findings_in_text"] is False]
+    pack["warnings"] = [f"key_findings_truncated:{','.join(lost)}"] if lost else []
     pack["pack_hash"] = content_hash(pack)
     return pack
 
@@ -216,7 +238,8 @@ async def build_all(only: set[str] | None, rebuild: str | None,
         pack = await build_pack(c, retriever)
         write_pack(pack, rebuild=bool(rebuild))
         print(f"  {c['id']}: {len(pack['passages'])} passages "
-              f"{pack['retrieval']['docs_per_channel']} flags={pack['flags']}")
+              f"{pack['retrieval']['docs_per_channel']} flags={pack['flags']}"
+              + (f" warnings={pack['warnings']}" if pack["warnings"] else ""))
         if pack["flags"]:
             flagged.append((c["id"], pack["flags"]))
     if flagged:
