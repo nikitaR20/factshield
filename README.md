@@ -25,6 +25,7 @@ Extension: `chrome://extensions` → Developer mode → Load unpacked → `exten
 backend/     FastAPI pipeline — see backend/README.md
 extension/   Chrome MV3 client, two study layouts
 eval/        snapshot corpus, four ablation conditions, analysis
+study/       thesis experiment on commercial models — separate from the product, see study/README.md
 docs/        ARCHITECTURE (what/why) · SYSTEM_DESIGN (how) · WALKTHROUGH (plain language)
 ```
 
