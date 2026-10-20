@@ -132,6 +132,9 @@ citations:
   sample_size: 150
 
 analysis:
+  # laplace: statsmodels fit_map. vb: fit_vb, which under-covers badly here
+  # (see study/analyse.py docstring). Do not switch to vb for inference.
+  mixed_method: laplace
   bootstrap_reps: 2000
   ci_level: 0.95
   synthetic:

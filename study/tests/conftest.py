@@ -42,3 +42,7 @@ def fake_retriever():
     async def r(claim, category, jurisdiction):
         return fake_docs(claim)
     return r
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "slow: fits a mixed model (~5 s)")
