@@ -79,6 +79,7 @@ def score_rows(rows: list[dict], claims: dict, packs: dict) -> list[dict]:
         ids = r.get("cited_ids") or []
         urls = r.get("cited_urls") or []
         retr = c.get("retrievable")
+        src = c.get("source_url")
         committed = pred in COMMITTED
         out.append({
             "claim_id": c["id"], "claim_set": c["set"], "domain": c["domain"],
@@ -86,6 +87,10 @@ def score_rows(rows: list[dict], claims: dict, packs: dict) -> list[dict]:
             "surface_detectable": c.get("surface_detectable"),
             "retrievable": int(all(retr.values())) if isinstance(retr, dict) and retr else None,
             "knew_unaided": knew.get((c["id"], r["model"])),
+            # Did the frozen pack contain the claim's own source article? In the
+            # closed-book conditions this, not provider retrievability, is what
+            # the model could actually see.
+            "source_in_pack": (int(canon_url(src) in purls) if src and pk else None),
             "model": r["model"], "model_version": r["model_version"],
             "condition": r["condition"], "run_index": r["run_index"],
             "live_search": r["live_search"], "gold": gold, "pred": pred,

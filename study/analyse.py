@@ -6,7 +6,8 @@
 
 Models, per outcome (correct, confidently_wrong, committed):
 
-1. Mixed-effects logistic regression
+1. Mixed-effects logistic regression, on run 0 only (repeats are not
+   independent observations; they feed the noise baseline, item 5)
        outcome ~ condition * claim_set + model + domain + retrievable
        + random intercept for source + random intercept for claim
    Claim ids are unique across sources, so the claim intercept is nested in
@@ -26,7 +27,7 @@ Models, per outcome (correct, confidently_wrong, committed):
    only to reproduce that comparison. For a conventional ML fit, lme4::glmer
    in R is the reference implementation; see the report.
 
-2. GEE, clustered on source, exchangeable working correlation, robust SEs.
+2. GEE (run 0), clustered on source, exchangeable working correlation, robust SEs.
    A frequentist cross-check with p-values. Its coefficients are
    population-averaged, so they are smaller in magnitude than the mixed
    model's subject-specific ones by design; compare sign and significance,
@@ -250,16 +251,21 @@ def report(df: pd.DataFrame, *, reps: int, seed: int, truth: dict | None = None,
         if outcome not in df or df[outcome].nunique() < 2:
             continue
         print(f"\n{'=' * 78}\nOUTCOME: {outcome}\n{'=' * 78}")
-        mixed = fit_mixed(df, outcome, method)
-        print(f"Mixed model ({mixed.attrs['method']} posterior; {mixed.attrs['formula']}"
-              f" + (1|source) + (1|claim)):")
+        # Models are fitted on ONE run. Repeats of the same claim x model x
+        # condition are not independent observations (at temperature 0 they are
+        # often identical), so pooling them would overstate precision. Repeats
+        # are used only for the run-to-run noise baseline below.
+        first = df[df["run_index"] == df["run_index"].min()]
+        mixed = fit_mixed(first, outcome, method)
+        print(f"Mixed model ({mixed.attrs['method']} posterior, run {first['run_index'].iloc[0]} only, "
+              f"n={len(first)}; {mixed.attrs['formula']} + (1|source) + (1|claim)):")
         show = mixed.copy()
         if truth and outcome == "correct":
             show["truth"] = show["term"].map(truth)
             show["covers"] = np.where(show["truth"].notna() & show["lo"].notna(),
                                       (show["lo"] <= show["truth"]) & (show["truth"] <= show["hi"]), None)
         print(show.round(3).to_string(index=False))
-        gee = fit_gee(df, outcome)
+        gee = fit_gee(first, outcome)
         print("\nGEE cross-check (population-averaged, clustered on source):")
         print(gee[gee["term"].str.startswith("condition")].round(4).to_string(index=False))
         pr = paired(df, outcome, reps, seed)
@@ -291,6 +297,7 @@ def coverage_study(n_reps: int, seed: int, method: str | None = None) -> None:
     rec = {k: {"cover": 0, "excl0": 0, "est": []} for k in keys}
     for i in range(n_reps):
         df = synthetic(seed + 1000 + i)
+        df = df[df["run_index"] == 0]
         m = fit_mixed(df, "correct", method).set_index("term")
         for k in keys:
             row = m.loc[k]
