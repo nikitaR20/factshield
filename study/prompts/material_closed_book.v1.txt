@@ -1,0 +1,7 @@
+CLAIM:
+{claim}
+
+POSSIBLE VERDICTS:
+- {label_supported}
+- {label_refuted}
+- {label_nei}

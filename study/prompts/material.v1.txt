@@ -1,0 +1,10 @@
+CLAIM:
+{claim}
+
+EVIDENCE PASSAGES:
+{passages}
+
+POSSIBLE VERDICTS:
+- {label_supported}
+- {label_refuted}
+- {label_nei}

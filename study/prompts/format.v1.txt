@@ -1,0 +1,5 @@
+Decide, based on the evidence passages below, whether the claim is supported, refuted, or whether there is not enough evidence to tell. Reply in exactly this format, with the three fields in this order and nothing else:
+
+Reasoning: <your reasoning>
+Verdict: <one of the three possible verdicts>
+Confidence: <low, medium or high>
