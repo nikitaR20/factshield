@@ -76,14 +76,23 @@ def compute(
 
     pack = pack_for(category, jurisdiction)
     expected = set(pack.get("expected_tiers", []))
-    present = {i.tier for i in items}
+    # Only documents that TAKE A POSITION count as the expected tier being
+    # present. Two peer-reviewed papers that were retrieved but are
+    # `insufficient` — neither addresses the claim — previously satisfied this
+    # check, so the rule "abstain when no top-tier document addresses the
+    # claim" never fired. Retrieving something is not the same as finding
+    # evidence.
+    present = {i.tier for i in items if i.stance in ("supports", "refutes")}
     expected_present = bool(expected & present) if expected else True
+    retrieved = {i.tier for i in items}
+    expected_retrieved = bool(expected & retrieved) if expected else True
 
     # A fact-checker who reviewed THIS claim is the best evidence available in
     # any category. It satisfies the tier requirement regardless of what the
     # pack lists.
-    if any(i.tier == "prior_check" and i.claim_match >= 0.8 for i in items):
+    if any(i.tier == "prior_check" and (i.claim_match or 0.0) >= 0.8 for i in items):
         expected_present = True
+        expected_retrieved = True
 
     # Every retrieved document merely repeats the claim; none evaluates it.
     # Coverage volume is not corroboration.
@@ -129,6 +138,7 @@ def compute(
         latest_source=max(dates) if dates else None,
         sources_postdate_claim=postdate,
         shares_common_origin=common_origin,
+        expected_tier_retrieved=expected_retrieved,
         expected_tier_present=expected_present,
         all_sources_report_only=all_report_only,
         tier_stance_split={k: dict(v) for k, v in split.items()},
@@ -150,8 +160,15 @@ ABSTENTION_RULES = [
         "Coverage is not confirmation.",
     ),
     (
+        lambda st, items: not st.expected_tier_retrieved,
+        "No source of the type this claim requires was found. This reflects "
+        "the limits of the search, not a finding that the evidence is balanced.",
+    ),
+    (
         lambda st, items: not st.expected_tier_present,
-        "No source of the type this claim would require was found.",
+        "Sources of the type this claim requires were found, but none took a "
+        "clear position on it. They may address a narrower question, or state "
+        "a finding the system could not read as bearing on the claim.",
     ),
     (
         lambda st, items: st.shares_common_origin and st.sources_postdate_claim,
@@ -159,6 +176,37 @@ ABSTENTION_RULES = [
         "of origins, which indicates repetition rather than independent evidence.",
     ),
 ]
+
+
+def abstention_kind(state: EvidenceState, items: list[EvidenceItem], scored: bool = True) -> str:
+    """WHY the system declined, as a short code the analysis can count.
+
+    The distinction that matters: an abstention caused by retrieval failure
+    ("nothing_found", "no_addressing_source") is not the same finding as one
+    caused by genuinely balanced or thin evidence. Without separating them, a
+    run of "good abstentions" may just be a run of failed searches.
+    """
+    if state.n_documents == 0:
+        return "nothing_found"
+    if state.all_sources_report_only:
+        return "repetition_only"
+    if not state.expected_tier_retrieved:
+        return "expected_tier_not_retrieved"
+    if not state.expected_tier_present:
+        # The search worked; nothing it found took a position. That is a
+        # relevance or READING limit, and must not be counted as a search
+        # failure — the vitamin D trace retrieved three syntheses and still
+        # abstained because the grader couldn't read their null findings.
+        return "retrieved_but_silent"
+    if state.shares_common_origin and state.sources_postdate_claim:
+        return "amplified"
+    if not scored:
+        return "too_thin"
+    return "other"
+
+
+RETRIEVAL_LIMITED = {"nothing_found", "expected_tier_not_retrieved"}
+READING_LIMITED = {"retrieved_but_silent"}
 
 
 def standing_for_abstention(state: EvidenceState, items: list[EvidenceItem]) -> str:
@@ -176,7 +224,13 @@ def standing_for_abstention(state: EvidenceState, items: list[EvidenceItem]) -> 
     if not state.expected_tier_present:
         recent = state.claim_age_hours is not None and state.claim_age_hours < 72
         return "unestablished" if recent else "overstated"
-    return "contested"
+    # Sources of the right kind exist and took positions, but too few to
+    # score. Only call it contested if they actually point both ways.
+    split = state.tier_stance_split or {}
+    sides = {st for tiers in split.values() for st, n in tiers.items() if n}
+    if {"supports", "refutes"} <= sides:
+        return "contested"
+    return "unestablished"
 
 
 def should_abstain(state: EvidenceState, items: list[EvidenceItem]) -> str | None:

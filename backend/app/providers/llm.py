@@ -12,6 +12,9 @@ import json
 import re
 from typing import Any
 
+import asyncio
+import random
+
 import httpx
 
 from ..config import env, models
@@ -32,7 +35,7 @@ def _extract_json(text: str) -> dict[str, Any]:
         start, end = cleaned.find("{"), cleaned.rfind("}")
         if start == -1 or end <= start:
             raise LLMError(f"No JSON object in response: {text[:200]!r}")
-        return json.loads(cleaned[start : end + 1])
+        return json.loads(cleaned[start: end + 1])
 
 
 async def _call_groq(model: str, system: str, user: str, cfg: dict) -> str:
@@ -84,6 +87,13 @@ async def _call_gemini(model: str, system: str, user: str, cfg: dict) -> str:
 _PROVIDERS = {"groq": _call_groq, "gemini": _call_gemini}
 
 
+async def _backoff(attempt: int) -> None:
+    """Exponential backoff with jitter. The jitter matters when a batch of
+    claims all hit a rate limit at once — without it they retry in lockstep
+    and trip the same limit again."""
+    await asyncio.sleep(min(8.0, 2.0 ** attempt) + random.uniform(0, 0.75))
+
+
 async def complete_json(stage: str, system: str, user: str) -> dict[str, Any]:
     """Call the model configured for `stage`, returning parsed JSON.
 
@@ -95,6 +105,12 @@ async def complete_json(stage: str, system: str, user: str) -> dict[str, Any]:
     stage_cfg = cfg_all.get(stage, {})
     chain = [stage_cfg] + list(cfg_all.get("fallbacks", {}).get(stage, []))
 
+    # Transient failures deserve a retry; permanent ones do not. A ReadTimeout
+    # or a 429 means "try again shortly"; a 404 means the model name is wrong
+    # and retrying is pointless. Eight of twenty-one claims failed on timeouts
+    # with no second attempt, because the loop only retried malformed JSON.
+    transient_attempts = int(stage_cfg.get("retries", 3))
+
     last: list[str] = []
     for entry in chain:
         provider = entry.get("provider")
@@ -104,12 +120,15 @@ async def complete_json(stage: str, system: str, user: str) -> dict[str, Any]:
             last.append(f"{provider}/{model}: not configured")
             continue
         merged = {**stage_cfg, **entry}
-        for attempt in range(2):
+        repaired_once = False
+        for attempt in range(transient_attempts):
             try:
                 raw = await fn(model, system, user, merged)
                 return _extract_json(raw)
+
             except (LLMError, json.JSONDecodeError) as exc:
-                if attempt == 0:
+                if not repaired_once:
+                    repaired_once = True
                     user = (
                         f"{user}\n\nYour previous reply was not valid JSON "
                         f"({exc}). Reply with the JSON object only."
@@ -117,14 +136,29 @@ async def complete_json(stage: str, system: str, user: str) -> dict[str, Any]:
                     continue
                 last.append(f"{provider}/{model}: {exc}")
                 break
+
             except httpx.HTTPStatusError as exc:
+                code = exc.response.status_code
                 body = ""
                 try:
                     body = exc.response.text[:200]
                 except Exception:
                     pass
-                last.append(f"{provider}/{model}: HTTP {exc.response.status_code} {body}")
+                # 429 rate limit and 5xx are worth retrying; 4xx is not.
+                if code in (429, 500, 502, 503, 504) and attempt < transient_attempts - 1:
+                    await _backoff(attempt)
+                    continue
+                last.append(f"{provider}/{model}: HTTP {code} {body}")
                 break
+
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as exc:
+                if attempt < transient_attempts - 1:
+                    await _backoff(attempt)
+                    continue
+                last.append(f"{provider}/{model}: {type(exc).__name__} after "
+                            f"{transient_attempts} attempts")
+                break
+
             except httpx.HTTPError as exc:
                 last.append(f"{provider}/{model}: {type(exc).__name__} {exc}")
                 break

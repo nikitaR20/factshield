@@ -34,11 +34,14 @@ async def main_run() -> None:
                     help="Repeats per claim. Providers are not fully "
                          "deterministic even at temperature 0, so variance is "
                          "reported rather than assumed away.")
-    ap.add_argument("--conditions", default="full,open_web_only,no_page_context,parametric")
+    ap.add_argument(
+        "--conditions", default="full,open_web_only,no_page_context,parametric")
     args = ap.parse_args()
 
-    records = [json.loads(l) for l in Path(args.corpus).read_text().splitlines() if l.strip()]
-    names = [c.strip() for c in args.conditions.split(",") if c.strip() in CONDITIONS]
+    records = [json.loads(l) for l in Path(
+        args.corpus).read_text().splitlines() if l.strip()]
+    names = [c.strip() for c in args.conditions.split(",")
+             if c.strip() in CONDITIONS]
 
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -50,7 +53,8 @@ async def main_run() -> None:
                     try:
                         res = await CONDITIONS[name](rec)
                     except Exception as exc:
-                        res = {"condition": name, "claim_verdict": "error", "error": str(exc)}
+                        res = {"condition": name,
+                               "claim_verdict": "error", "error": str(exc)}
                     fh.write(json.dumps({
                         "run": run_i, "id": rec["id"],
                         "gold": rec.get("label"),
@@ -88,14 +92,16 @@ def analyze(path: Path) -> None:
 
     print("\n=== Macro F1 by condition and claim category ===\n")
     cats = sorted({r["category"] for rs in by_cond.values() for r in rs})
-    header = f"{'condition':<18}" + "".join(f"{c[:12]:>14}" for c in cats) + f"{'ALL':>14}"
+    header = f"{'condition':<18}" + \
+        "".join(f"{c[:12]:>14}" for c in cats) + f"{'ALL':>14}"
     print(header)
     print("-" * len(header))
 
     for cond, rs in sorted(by_cond.items()):
         line = f"{cond:<18}"
         for cat in cats:
-            pairs = [(r["gold"], r["claim_verdict"]) for r in rs if r["category"] == cat]
+            pairs = [(r["gold"], r["claim_verdict"])
+                     for r in rs if r["category"] == cat]
             line += f"{macro_f1(pairs):>14.3f}" if pairs else f"{'—':>14}"
         line += f"{macro_f1([(r['gold'], r['claim_verdict']) for r in rs]):>14.3f}"
         print(line)
@@ -121,11 +127,14 @@ def analyze(path: Path) -> None:
         for r in rs:
             groups[r["id"]].append(r["claim_verdict"])
         stable = sum(1 for v in groups.values() if len(set(v)) == 1)
-        print(f"{cond:<18}{stable}/{len(groups)} claims gave an identical verdict every run")
+        print(
+            f"{cond:<18}{stable}/{len(groups)} claims gave an identical verdict every run")
 
     # How often does retrieval overturn the model's prior, and who is right?
-    prior = {r["id"]: r["claim_verdict"] for r in by_cond.get("parametric", [])}
-    full = {r["id"]: (r["claim_verdict"], r["gold"]) for r in by_cond.get("full", [])}
+    prior = {r["id"]: r["claim_verdict"]
+             for r in by_cond.get("parametric", [])}
+    full = {r["id"]: (r["claim_verdict"], r["gold"])
+            for r in by_cond.get("full", [])}
     shared = set(prior) & set(full)
     if shared:
         disagree = [i for i in shared if prior[i] != full[i][0]]
@@ -137,9 +146,34 @@ def analyze(path: Path) -> None:
             print(f"when they disagreed, the evidence-grounded verdict was correct "
                   f"{evidence_right}/{len(disagree)} times")
 
-    n_ev = [r["n_evidence"] for r in by_cond.get("full", []) if "n_evidence" in r]
+    # WHY did it abstain? The question an examiner will ask is how many
+    # "careful abstentions" are really failed searches. Retrieval-limited
+    # abstentions are reported separately from evidence-limited ones.
+    print("\n=== Abstentions by cause ===\n")
+    retrieval_limited = {"nothing_found", "expected_tier_not_retrieved"}
+    reading_limited = {"retrieved_but_silent"}
+    for cond, rs in sorted(by_cond.items()):
+        kinds: dict[str, int] = {}
+        for r in rs:
+            for sub in r.get("sub_results") or [r]:
+                if sub.get("abstained"):
+                    k = sub.get("abstain_kind", "unknown")
+                    kinds[k] = kinds.get(k, 0) + 1
+        if not kinds:
+            continue
+        total = sum(kinds.values())
+        search = sum(n for k, n in kinds.items() if k in retrieval_limited)
+        reading = sum(n for k, n in kinds.items() if k in reading_limited)
+        detail = ", ".join(f"{k} {n}" for k, n in sorted(
+            kinds.items(), key=lambda x: -x[1]))
+        print(f"{cond:<18}{total:>3} abstentions  "
+              f"({search} search-limited, {reading} reading-limited)   {detail}")
+
+    n_ev = [r["n_evidence"]
+            for r in by_cond.get("full", []) if "n_evidence" in r]
     if n_ev:
-        print(f"\nmean evidence items per claim (full): {statistics.mean(n_ev):.1f}")
+        print(
+            f"\nmean evidence items per claim (full): {statistics.mean(n_ev):.1f}")
 
 
 def main_analyze() -> None:

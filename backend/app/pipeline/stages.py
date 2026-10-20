@@ -23,6 +23,13 @@ from ..schemas import (
 )
 
 _CITE = re.compile(r"\[(\d+)\]")
+
+# A sentence asserting plurality must cite plural evidence. "Multiple authority
+# sources confirm..." citing one source passed entailment, because the single
+# quote does support the proposition — just not the word "multiple".
+_PLURAL = re.compile(
+    r"\b(multiple|several|many|numerous|various|all|most|both|"
+    r"a number of|widely|consensus|broad agreement)\b", re.I)
 _SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
@@ -63,6 +70,11 @@ async def triage(ctx: CaptureContext) -> tuple[TriageOutput, str]:
             id=int(c.get("id", i + 1)),
             text=str(c.get("text", "")).strip(),
             attribution_extracted=bool(c.get("attribution_extracted", False)),
+            search_concepts=[
+                [str(t).strip() for t in group if str(t).strip()]
+                for group in (c.get("search_concepts") or [])
+                if isinstance(group, list)
+            ],
         )
         for i, c in enumerate(data.get("sub_claims", []))
         if str(c.get("text", "")).strip()
@@ -100,12 +112,13 @@ def fast_path_verdict(
         # The fact-checker must have reviewed THIS claim, not a neighbouring
         # one. Without this gate, "Covid originated from China" inherits the
         # rating of "Wuhan Lab Leak Theory CONFIRMED".
-        and i.claim_match >= 0.6
+        and (i.claim_match or 0.0) >= 0.6
     ]
     if not checks:
         return None
 
-    top = max(checks, key=lambda i: (i.claim_match, i.stance_confidence))
+    top = max(checks, key=lambda i: (
+        i.claim_match or 0.0, i.stance_confidence))
     if top.stance_confidence < 0.9:
         return None
 
@@ -256,7 +269,7 @@ def describe_evidence(
     if unclear:
         near = sum(
             1 for i in items
-            if i.tier == "prior_check" and i.stance == "discusses" and i.claim_match < 0.8
+            if i.tier == "prior_check" and i.stance == "discusses" and (i.claim_match or 0.0) < 0.8
         )
         if near:
             parts.append(
@@ -265,9 +278,12 @@ def describe_evidence(
             )
         elif unclear == len(items):
             parts.append("None takes a clear position on this specific claim.")
-    if not state.expected_tier_present:
+    if not state.expected_tier_retrieved:
         parts.append(
             "No source of the type this claim would require was found.")
+    elif not state.expected_tier_present:
+        parts.append("Sources of the required type were found, but none took a "
+                     "clear position on this claim.")
     # Without this, a verdict of "partly supported" sat beside "4 support, 0
     # contradict" with nothing explaining the gap between them.
     if downgrade_pattern and downgrade_pattern in _DOWNGRADE_REASON:
@@ -299,6 +315,9 @@ def ground(
         ids = [int(m) for m in _CITE.findall(sent) if int(m) in by_id]
         if not ids:
             dropped += 1          # no citation -> unsupported by construction
+            continue
+        if _PLURAL.search(sent) and len(set(ids)) < 2:
+            dropped += 1          # claims plurality, cites one source
             continue
         premise = " ".join(by_id[i].quote for i in ids)
         if nli.entails(premise, _CITE.sub("", sent).strip()):

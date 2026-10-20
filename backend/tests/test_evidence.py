@@ -712,3 +712,512 @@ def test_downgrade_is_explained_in_fallback_text():
         items, state, downgrade_pattern="quote_omits_context")
     assert "context" not in plain
     assert "context the claim leaves out" in explained
+
+
+# ======================================================================
+# Vitamin D regression: six bugs from one pilot claim
+# ======================================================================
+
+def test_bug1_tier_is_earned_by_domain_not_channel():
+    """A supplement retailer arriving through the authority channel was tiered
+    `authority`, cited as the sole support, and satisfied the expected-tier
+    check that should have flagged the claim."""
+    from app.pipeline.grading import assign_tier
+    from app.schemas import RawDocument
+
+    retailer = RawDocument(url="https://www.metagenics.ie/vitamin-d", title="t",
+                           text="x", source_domain="metagenics.ie", channel="authority")
+    assert assign_tier(retailer, "medical", None) == "low"
+
+    who = RawDocument(url="https://www.who.int/x", title="t", text="x",
+                      source_domain="who.int", channel="authority")
+    assert assign_tier(who, "medical", None) == "authority"
+
+    # Credible, but not a medical authority: journalism, not domain expertise.
+    reuters = RawDocument(url="https://www.reuters.com/x", title="t", text="x",
+                          source_domain="reuters.com", channel="authority")
+    assert assign_tier(reuters, "medical", None) == "reporting"
+
+
+def test_bug2a_hedged_evidence_does_not_support_categorical_claim():
+    """"Supplements MAY HELP to prevent" was graded as supporting
+    "supplements PREVENT"."""
+    from app.pipeline.grading import hedge_mismatch
+
+    claim = "Vitamin D supplements prevent respiratory infections"
+    assert hedge_mismatch(
+        "Vitamin D supplements may help to prevent infections.", claim)
+    assert hedge_mismatch(
+        "Some trials found a protective effect and others did not.", claim)
+    assert not hedge_mismatch(
+        "Vitamin D supplementation prevented infections.", claim)
+    # A hedged claim matched by hedged evidence is not a mismatch.
+    assert not hedge_mismatch(
+        "Supplements may reduce risk.", "Supplements may reduce risk")
+
+
+def test_bug2b_headlines_are_discounted():
+    from app.pipeline.grading import HEADLINE_DISCOUNT
+
+    assert 0 < HEADLINE_DISCOUNT < 1
+
+
+@pytest.mark.asyncio
+async def test_bug1b_out_of_pack_results_leave_the_authority_channel(monkeypatch):
+    """The provider's domain filter is not strictly enforced. Out-of-pack
+    results must not ride in on the authority channel."""
+    import app.retrieval as R
+    from app.schemas import RawDocument
+
+    async def fake_tavily(claim, limit, include, channel):
+        return [
+            RawDocument(url="https://www.who.int/a", title="t", text="x",
+                        source_domain="who.int", channel=channel),
+            RawDocument(url="https://www.metagenics.ie/b", title="t", text="x",
+                        source_domain="metagenics.ie", channel=channel),
+        ]
+
+    monkeypatch.setattr(R, "_tavily", fake_tavily)
+    docs = await R.domain_search("claim", category="medical")
+    by_domain = {d.source_domain: d.channel for d in docs}
+    assert by_domain["who.int"] == "authority"
+    assert by_domain["metagenics.ie"] == "open_web"
+
+
+def test_bug3_pubmed_query_uses_keywords_not_sentence():
+    """The raw claim returned one dose-comparison trial and missed every
+    meta-analysis. Relation words are what's being tested, so requiring them
+    filters out null results."""
+    from app.retrieval import _pubmed_terms
+
+    q = _pubmed_terms("Vitamin D supplements prevent respiratory infections.")
+    assert "prevent" not in q.lower()
+    assert "D" in q.split(), "the D in 'Vitamin D' must survive"
+    assert "5G" in _pubmed_terms(
+        "Some scientists believe 5G signals cause cancer.")
+    assert "B12" in _pubmed_terms("Vitamin B12 deficiency causes memory loss.")
+
+
+def test_bug4_thin_evidence_cannot_score_100():
+    """Total weight 0.3678 — barely over the 0.35 floor — produced a score of
+    100 because nothing refuted it. The ratio says how evidence leans, not how
+    much there is."""
+    from datetime import date as _date
+
+    thin = [item(id=1, tier="authority", role="asserts", stance="supports",
+                 stance_confidence=0.9, published_date=_date(2026, 1, 1),
+                 url="https://a.com/x", source_domain="a.com"),
+            item(id=2, tier="authority", role="asserts", stance="supports",
+                 stance_confidence=0.9, published_date=_date(2026, 1, 1),
+                 url="https://b.com/x", source_domain="b.com")]
+    score, basis = scoring.compute_score(
+        thin, "medical", 2, today=_date(2026, 2, 1))
+    assert score is not None
+    assert basis["raw_ratio"] == 100.0
+    assert score < 80, "one-sided but thin evidence must not read as certainty"
+
+    strong = [item(id=i, tier="peer_reviewed", role="assesses", stance="supports",
+                   stance_confidence=0.95, published_date=_date(2026, 1, 1),
+                   url=f"https://s{i}.org/x", source_domain=f"s{i}.org")
+              for i in range(1, 5)]
+    score, _ = scoring.compute_score(
+        strong, "medical", 4, today=_date(2026, 2, 1))
+    assert score == 100, "the same lean with strong evidence reaches full"
+
+
+def test_bug5_overstated_fires_once_tiers_are_honest():
+    """With the retailer correctly tiered `low`, a medical claim with no
+    peer-reviewed or institutional support no longer passes the tier check."""
+    items = [
+        item(id=1, tier="low", role="asserts", stance="supports",
+             url="https://metagenics.ie/x", source_domain="metagenics.ie"),
+        item(id=2, tier="reporting", role="reports", stance="supports",
+             url="https://news.harvard.edu/x", source_domain="news.harvard.edu"),
+    ]
+    state = ev.compute(items, "medical")
+    assert state.expected_tier_present is False
+    assert ev.should_abstain(state, items) is not None
+
+
+def test_bug6_plural_claim_needs_plural_citations():
+    """"Multiple authority sources" cited one source and passed grounding."""
+    from app.pipeline.stages import ground
+
+    ev_items = [item(id=1, quote="Supplementation reduced infection rates."),
+                item(id=2, quote="Supplementation reduced infection rates in trials.",
+                     url="https://b.com/x", source_domain="b.com")]
+    _, _, _, dropped = ground(
+        "Multiple authority sources confirm supplementation reduces infections [1].",
+        ev_items)
+    assert dropped == 1
+
+
+# ======================================================================
+# Round two: right answer, wrong reason
+# ======================================================================
+
+def test_retrieved_but_silent_top_tier_does_not_count():
+    """Two peer-reviewed papers were retrieved, neither addressed the claim
+    (both `insufficient`), and they still satisfied the expected-tier check.
+    Retrieving something is not the same as finding evidence."""
+    items = [
+        item(id=1, tier="peer_reviewed", channel="literature", stance="insufficient",
+             url="https://pubmed.ncbi.nlm.nih.gov/1/", source_domain="pubmed.ncbi.nlm.nih.gov"),
+        item(id=2, tier="peer_reviewed", channel="literature", stance="insufficient",
+             url="https://pubmed.ncbi.nlm.nih.gov/2/", source_domain="nih.gov"),
+        item(id=3, tier="reporting", role="asserts", stance="supports",
+             url="https://news.harvard.edu/x", source_domain="news.harvard.edu"),
+    ]
+    state = ev.compute(items, "medical")
+    assert state.expected_tier_retrieved is True     # the search worked
+    assert state.expected_tier_present is False      # nothing took a position
+    reason = ev.should_abstain(state, items)
+    # Must NOT blame the search when the search succeeded.
+    assert reason and "limits of the search" not in reason
+    assert "none took a clear position" in reason
+
+
+def test_abstention_kind_separates_retrieval_failure_from_thin_evidence():
+    """The examiner's question: how many good abstentions are failed searches?"""
+    assert ev.abstention_kind(ev.compute([], "medical"), []) == "nothing_found"
+
+    silent = [item(id=1, tier="peer_reviewed", stance="insufficient",
+                   url="https://p.org/1", source_domain="p.org")]
+    assert ev.abstention_kind(ev.compute(
+        silent, "medical"), silent) == "retrieved_but_silent"
+    assert "retrieved_but_silent" in ev.READING_LIMITED
+    assert "retrieved_but_silent" not in ev.RETRIEVAL_LIMITED
+
+    blogs = [item(id=1, tier="low", stance="supports",
+                  url="https://b.com/1", source_domain="b.com")]
+    kind = ev.abstention_kind(ev.compute(blogs, "medical"), blogs)
+    assert kind == "expected_tier_not_retrieved"
+    assert kind in ev.RETRIEVAL_LIMITED
+
+    thin = [item(id=1, tier="peer_reviewed", stance="supports", role="assesses",
+                 url="https://p.org/1", source_domain="p.org")]
+    assert ev.abstention_kind(ev.compute(
+        thin, "medical"), thin, scored=False) == "too_thin"
+    assert "too_thin" not in ev.RETRIEVAL_LIMITED
+
+
+def test_pattern_rejected_when_evidence_contradicts_it():
+    """`expert_sources_disagree` was returned when nobody disagreed."""
+    silent = [item(id=1, tier="peer_reviewed", stance="insufficient"),
+              item(id=2, tier="reporting", stance="supports",
+                   url="https://b.com/x", source_domain="b.com")]
+    assert scoring.validate_pattern("expert_sources_disagree", silent) is None
+
+    split = [item(id=1, tier="peer_reviewed", stance="supports"),
+             item(id=2, tier="authority", stance="refutes",
+                  url="https://b.com/x", source_domain="b.com")]
+    assert scoring.validate_pattern(
+        "expert_sources_disagree", split) == "expert_sources_disagree"
+
+    assert scoring.validate_pattern("directly_contradicted", silent) is None
+    assert scoring.validate_pattern(
+        "figure_outdated", silent) == "figure_outdated"
+
+
+def test_thin_evidence_is_not_labelled_contested_unless_it_disagrees():
+    one_sided = [item(id=1, tier="peer_reviewed", stance="supports", role="assesses",
+                      url="https://p.org/1", source_domain="p.org")]
+    assert ev.standing_for_abstention(ev.compute(
+        one_sided, "medical"), one_sided) == "unestablished"
+
+
+def test_pubmed_month_dates_are_parsed():
+    """PubMed's usual "2008 Mar" silently became None, starving the outdated
+    detection of dates. PubMed always has a date."""
+    from datetime import date as _date
+
+    from app.retrieval import _parse_date
+
+    assert _parse_date("2008 Mar") == _date(2008, 3, 1)
+    assert _parse_date("2008 Mar 15") == _date(2008, 3, 15)
+    assert _parse_date("2008 Mar-Apr") == _date(2008, 3, 1)
+    assert _parse_date("2008") == _date(2008, 1, 1)
+    assert _parse_date("2026-09-16T10:00:00Z") == _date(2026, 9, 16)
+    assert _parse_date(None) is None
+
+
+def test_partial_effect_is_not_prevention():
+    """"Reduce risk by up to 12%" was graded `supports` at 0.887 for
+    "prevent". The hedge check caught "may" but not a weaker effect stated
+    without hedging."""
+    from app.pipeline.grading import hedge_mismatch
+
+    claim = "Vitamin D supplements prevent respiratory infections"
+    assert hedge_mismatch(
+        "Vitamin D reduced the risk of infection by 12%.", claim)
+    assert hedge_mismatch(
+        "A modest reduction in infection rates was observed.", claim)
+    assert not hedge_mismatch(
+        "Vitamin D prevented infections in all participants.", claim)
+    # A non-categorical claim is not overstated by a partial effect.
+    assert not hedge_mismatch("Vitamin D reduced the risk of infection by 12%.",
+                              "Vitamin D reduces the risk of respiratory infection")
+
+
+def test_concept_query_ors_synonyms_and_ands_concepts():
+    from app.retrieval import _concept_query
+
+    q = _concept_query([["vitamin D", "cholecalciferol"],
+                        ["respiratory infection", "common cold"]])
+    assert q == ('("vitamin D" OR cholecalciferol) AND '
+                 '("respiratory infection" OR "common cold")')
+    assert "prevent" not in q
+
+
+def test_claim_match_is_null_outside_factchecks():
+    """It defaulted to 1.0, so an unrelated 2008 article carried claim_match 1
+    — a field uniformly 1 distinguishes nothing."""
+    from app.schemas import EvidenceItem
+
+    assert EvidenceItem.model_fields["claim_match"].default is None
+
+
+def test_retrieval_recall_matching():
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+    from eval.retrieval import recall_for
+
+    rec = {"must_retrieve": ["12345", "10.1136/bmj.i6583", "who.int/news/item/vitd"],
+           "documents": {"1": [{"url": "https://pubmed.ncbi.nlm.nih.gov/12345/"},
+                               {"url": "https://www.who.int/news/item/vitd-2025"}]}}
+    found, wanted, missed = recall_for(rec)
+    assert (found, wanted) == (2, 3)
+    assert missed == ["10.1136/bmj.i6583"]
+
+
+# ======================================================================
+# Round three: the search worked, the reading didn't
+# ======================================================================
+
+def test_pubmed_entities_are_decoded():
+    """"OR 1·40; 95% CI 0·70, 2·79" reached the model as
+    "OR 1&#xb7;40; 95 % CI 0&#xb7;70" — the numbers carrying the finding were
+    unreadable."""
+    from app.retrieval import _clean
+
+    assert _clean(
+        "OR, 1&#xb7;40; 95 % CI: 0&#xb7;70, 2&#xb7;79") == "OR, 1.40; 95 % CI: 0.70, 2.79"
+    assert _clean(
+        "<i>in vitro</i> &amp; <b>in vivo</b>") == "in vitro & in vivo"
+
+
+def test_structured_abstract_keeps_its_findings():
+    """The parser discarded AbstractText attributes — exactly where PubMed puts
+    Label="CONCLUSIONS"."""
+    from app.retrieval import _parse_abstracts
+
+    xml = ('<PubmedArticle><PMID Version="1">1</PMID>'
+           '<AbstractText Label="BACKGROUND">In 2017, 18% of adults exceeded 1000 IU.</AbstractText>'
+           '<AbstractText Label="RESULTS">No significant effect on incidence.</AbstractText>'
+           '<AbstractText Label="CONCLUSIONS">Supplementation did not reduce infections.</AbstractText>'
+           '</PubmedArticle>')
+    full, findings = _parse_abstracts(xml)["1"]
+    assert "18% of adults" in full
+    assert "18% of adults" not in findings
+    assert "did not reduce" in findings
+
+
+def test_findings_are_scored_before_background():
+    from app.pipeline.grading import _candidate_sentences
+
+    out = _candidate_sentences(
+        "A systematic review", "In 2017, 18% of adults exceeded 1000 IU daily. Background.",
+        "Vitamin D prevents colds", 2,
+        key_findings="Supplementation did not reduce the incidence of respiratory infection.")
+    assert out[0].startswith("Supplementation did not reduce")
+
+
+def test_null_result_refutes_a_categorical_claim():
+    """A 2024 meta-analysis reporting "no significant effect" scored
+    `insufficient` at 0.104. NLI reasonably reads a statistical null as
+    neutral, but against "prevents" it is precisely the evidence that matters."""
+    from app.pipeline.grading import (NULL_RESULT_CONFIDENCE,
+                                      NULL_SUBGROUP_CONFIDENCE, null_result_against)
+
+    claim = "Vitamin D supplements prevent colds and flu"
+    assert null_result_against(
+        "Supplementation did not reduce the incidence of respiratory infection.", claim
+    ) == NULL_RESULT_CONFIDENCE
+    # A subgroup null says less about the general claim.
+    assert null_result_against(
+        "There was no significant effect on ARTI incidence in ethnic minority groups.", claim
+    ) == NULL_SUBGROUP_CONFIDENCE
+    # A positive finding is not a null.
+    assert null_result_against(
+        "Supplementation reduced the risk of infection.", claim) is None
+    # A non-categorical claim is left to the NLI model.
+    assert null_result_against("did not reduce infection.",
+                               "Vitamin D is associated with fewer colds") is None
+
+
+@pytest.mark.asyncio
+async def test_null_result_rule_applies_only_to_literature():
+    """A news article saying a study "did not reduce" something is reporting,
+    not the finding itself. The rule is confined to peer-reviewed abstracts."""
+    from app.pipeline import grading
+    from app.schemas import RawDocument
+
+    lit = RawDocument(url="https://pubmed.ncbi.nlm.nih.gov/9/", title="A review",
+                      text="Supplementation did not reduce respiratory infection incidence.",
+                      source_domain="pubmed.ncbi.nlm.nih.gov", channel="literature",
+                      key_findings="Supplementation did not reduce respiratory infection incidence.")
+    news = RawDocument(url="https://news.example.com/x", title="A story",
+                       text="Supplementation did not reduce respiratory infection incidence.",
+                       source_domain="news.example.com", channel="open_web")
+    items = await grading.grade([lit, news], "Vitamin D supplements prevent colds", 1, "medical")
+    by_channel = {i.channel: i for i in items}
+    assert by_channel["literature"].stance == "refutes"
+    assert by_channel["literature"].stance_confidence == grading.NULL_RESULT_CONFIDENCE
+    # The news item may still read as refuting via the NLI model, but never
+    # through the null-result rule — so it must not carry the rule's constant.
+    assert by_channel["open_web"].stance_confidence != grading.NULL_RESULT_CONFIDENCE
+
+
+# ======================================================================
+# Round four: preferring findings, and research as assessment
+# ======================================================================
+
+@pytest.mark.asyncio
+async def test_findings_sentence_wins_over_background():
+    """Listing findings first was not enough — selection picks the highest NLI
+    score, so a background sentence with good word overlap still won. Item 1 of
+    the vitamin D trace kept quoting hypercalcaemia statistics from a review
+    whose conclusion was the point."""
+    from app.pipeline import grading
+    from app.schemas import RawDocument
+
+    background = ("In 2017, a study uncovered increasing trends in vitamin D "
+                  "supplementation, revealing that 18% of adults exceeded 1000 IU daily.")
+    conclusion = "Vitamin D supplementation did not prevent respiratory infection."
+
+    doc = RawDocument(
+        url="https://pubmed.ncbi.nlm.nih.gov/1/", title="A systematic review of trials",
+        text=f"{background} {conclusion}", source_domain="pubmed.ncbi.nlm.nih.gov",
+        channel="literature", key_findings=conclusion,
+    )
+    items = await grading.grade([doc], "Vitamin D supplements prevent colds", 1, "medical")
+    assert "18% of adults" not in items[0].quote
+
+
+@pytest.mark.asyncio
+async def test_peer_reviewed_research_counts_as_assessment():
+    """Every paper scored `asserts` (0.4) because its findings sentence contains
+    no phrase like "our analysis found" — so a meta-analysis directly on the
+    question counted for less than a news article. Research evaluates a
+    hypothesis; that is what the genre is."""
+    from app.pipeline import grading
+    from app.schemas import RawDocument
+
+    paper = RawDocument(
+        url="https://pubmed.ncbi.nlm.nih.gov/2/", title="A meta-analysis",
+        text="There was no significant effect on infection incidence.",
+        source_domain="pubmed.ncbi.nlm.nih.gov", channel="literature",
+        key_findings="There was no significant effect on infection incidence.")
+    items = await grading.grade([paper], "Vitamin D supplements prevent colds", 1, "medical")
+    assert items[0].role == "assesses"
+
+
+def test_corrupted_sentences_are_not_quotable():
+    """"more susceptible13108-1/pdf) to getting colds" — link markup spliced
+    into prose."""
+    from app.pipeline.grading import sentences
+
+    text = ("Low vitamin D may make you more susceptible13108-1/pdf) to getting colds. "
+            "Vitamin D supports immune function in several understood ways.")
+    kept = sentences(text)
+    assert not any("13108-1/pdf" in s for s in kept)
+    assert any("immune function" in s for s in kept)
+    assert not sentences(
+        "See [the study](https://example.com/paper.pdf) for details here.")
+
+
+# ======================================================================
+# Round five: reading a systematic review
+# ======================================================================
+
+def test_null_results_without_the_word_significant():
+    """"11 studies revealed no Vitamin D impact on outcomes including
+    respiratory infections" scored 0.066 — the pattern required the literal
+    word "significant"."""
+    from app.pipeline.grading import null_result_against
+
+    claim = "Vitamin D supplements prevent colds and flu"
+    for sentence in [
+        "Conversely, 11 studies revealed no Vitamin D impact on outcomes "
+        "including respiratory infections.",
+        "The review found no protective effect.",
+        "Supplementation showed no benefit over placebo.",
+        "There was no significant difference between groups.",
+    ]:
+        assert null_result_against(sentence, claim), sentence
+
+
+def test_safety_findings_never_refute_an_efficacy_claim():
+    """"No adverse effects were reported" is a finding about harm. Reading it
+    as evidence against efficacy would invert its meaning."""
+    from app.pipeline.grading import null_result_against
+
+    claim = "Vitamin D supplements prevent colds and flu"
+    assert null_result_against(
+        "No adverse effects were reported in any trial.", claim) is None
+    assert null_result_against(
+        "No serious side effects occurred.", claim) is None
+    assert null_result_against(
+        "No safety concerns were identified.", claim) is None
+
+
+def test_sample_descriptions_are_not_findings():
+    """PubMed files sample sizes under RESULTS, so the findings boost lifted
+    "The analysis included 43 RCTs with 49320 participants" — a description of
+    the study, not of what it found."""
+    from app.pipeline.grading import is_study_description
+
+    assert is_study_description(
+        "The analysis included 43 RCTs with 49320 participants.")
+    assert is_study_description(
+        "We searched CINAHL, Medline, Embase and Cochrane for RCTs.")
+    # A result that happens to count studies is still a result.
+    assert not is_study_description(
+        "11 studies revealed no Vitamin D impact on respiratory infections.")
+    assert not is_study_description(
+        "Supplementation reduced infection risk by 12%.")
+
+
+def test_conclusions_are_ordered_before_results():
+    """A conclusion states the verdict; results state the numbers."""
+    from app.retrieval import _parse_abstracts
+
+    xml = ('<PubmedArticle><PMID Version="1">1</PMID>'
+           '<AbstractText Label="METHODS">We searched four databases.</AbstractText>'
+           '<AbstractText Label="RESULTS">The analysis included 43 RCTs.</AbstractText>'
+           '<AbstractText Label="CONCLUSIONS">Supplementation did not prevent infection.</AbstractText>'
+           '</PubmedArticle>')
+    _, findings = _parse_abstracts(xml)["1"]
+    assert findings.index("did not prevent") < findings.index(
+        "included 43 RCTs")
+    assert "four databases" not in findings
+
+
+def test_fallback_text_distinguishes_missing_from_silent():
+    """"No source of the type this claim would require was found" was shown
+    when sources HAD been found and simply took no position."""
+    from app.pipeline.stages import describe_evidence
+
+    silent = [item(id=1, tier="peer_reviewed", channel="literature", stance="insufficient",
+                   url="https://pubmed.ncbi.nlm.nih.gov/1/",
+                   source_domain="pubmed.ncbi.nlm.nih.gov")]
+    text = describe_evidence(silent, ev.compute(silent, "medical"))
+    assert "none took a clear position" in text
+    assert "would require was found" not in text
+
+    absent = [item(id=1, tier="low", stance="supports",
+                   url="https://b.com/x", source_domain="b.com")]
+    assert "would require was found" in describe_evidence(
+        absent, ev.compute(absent, "medical"))

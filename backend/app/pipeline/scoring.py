@@ -110,7 +110,22 @@ def compute_score(
         basis["reason_no_score"] = 1.0
         return None, basis
 
-    score = int(round(100.0 * support / total))
+    # The ratio alone says how the evidence LEANS, not how MUCH there is. A
+    # total weight of 0.3678 — barely over the 0.35 floor, all from one
+    # mislabelled source — produced a score of 100, because nothing refuted it.
+    # A number that reads as maximum confidence on minimal evidence is exactly
+    # the overconfidence this system is meant to avoid.
+    #
+    # So the ratio is shrunk toward 50 until evidence reaches a saturation
+    # weight. Thin one-sided evidence now scores in the 60s; the same lean
+    # backed by several strong sources reaches 100.
+    raw = 100.0 * support / total
+    saturation = cfg.get("saturation_weight", 1.2)
+    factor = min(1.0, total / saturation)
+    score = int(round(50.0 + (raw - 50.0) * factor))
+
+    basis["raw_ratio"] = round(raw, 1)
+    basis["evidence_factor"] = round(factor, 3)
     basis["score"] = float(score)
     return score, basis
 
@@ -217,3 +232,28 @@ def apply_pattern_downgrade(
     if standing == "consistent":
         standing = "overstated"
     return verdict, standing
+
+
+def validate_pattern(pattern: str | None, items: list[EvidenceItem]) -> str | None:
+    """Discard an explanation pattern that the evidence contradicts.
+
+    `expert_sources_disagree` was returned when both peer-reviewed sources were
+    `insufficient` and the only cited source was a news article — nobody
+    disagreed. The pattern is a claim ABOUT the evidence, so it can be checked
+    against the evidence, and it now is.
+    """
+    if not pattern:
+        return pattern
+    top = {"prior_check", "definitional", "peer_reviewed", "authority"}
+    top_stances = {i.stance for i in items if i.tier in top}
+    stances = {i.stance for i in items}
+
+    requirements = {
+        # disagreement needs both sides among credible sources
+        "expert_sources_disagree": {"supports", "refutes"} <= top_stances,
+        "directly_contradicted": "refutes" in stances,
+        "directly_confirmed": "supports" in stances,
+    }
+    if pattern in requirements and not requirements[pattern]:
+        return None
+    return pattern

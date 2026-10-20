@@ -20,14 +20,18 @@ triage:
   model: gemini-3.5-flash-lite
   temperature: 0
   max_tokens: 600
-  timeout_s: 8
+  # 8s was too tight for free-tier latency: eight of twenty-one claims timed
+  # out during a snapshot run.
+  timeout_s: 30
+  retries: 3
 
 decide:
   provider: gemini
   model: gemini-3.5-flash-lite
   temperature: 0
   max_tokens: 700
-  timeout_s: 12
+  timeout_s: 40
+  retries: 3
   # Only the top N graded documents reach this call. Models get worse at long
   # contexts, not better, and a smaller payload is faster and cheaper.
   max_evidence_items: 6
@@ -97,4 +101,4 @@ retrieval:
   max_docs_per_channel: 3
   # Open web is the only channel with meaningful per-query cost. It runs only
   # for categories that need it, or as a fallback when nothing else returned.
-  open_web_only_as_fallback: false  
+  open_web_only_as_fallback: false

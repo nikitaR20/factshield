@@ -27,6 +27,10 @@ _JUNK = re.compile(
     r"|subscribe to our|sign in to continue|enable javascript|^title:|all rights reserved"
     r"|follow us on|share this (article|page))", re.I)
 
+# Extraction splices link markup into prose: "more susceptible13108-1/pdf) to
+# getting colds". Such a sentence is unusable as a displayed quote.
+_BROKEN = re.compile(r"\]\(|https?://|\.pdf\)|\w\d{3,}-\d+/|\[\d+\]\(")
+
 # A source that merely reports THAT someone made a claim is not evidence the
 # claim is true. Hundreds of outlets covering a statement is coverage volume,
 # not corroboration — and without this distinction the aggregator counts it
@@ -47,9 +51,16 @@ def sentences(text: str, limit: int = 40) -> list[str]:
     parts = [
         s.strip()
         for s in _SENT.split(text or "")
-        if len(s.strip()) > 25 and not _JUNK.search(s)
+        if len(s.strip()) > 25 and not _JUNK.search(s) and not _BROKEN.search(s)
     ]
-    return parts[:limit] or ([text.strip()] if text and text.strip() else [])
+    if parts:
+        return parts[:limit]
+    # Fallback for text too short or unpunctuated to split — but it must pass
+    # the same filters, or it reintroduces exactly the junk they removed.
+    whole = (text or "").strip()
+    if whole and not _JUNK.search(whole) and not _BROKEN.search(whole):
+        return [whole]
+    return []
 
 
 _CLAIM_DATE = re.compile(
@@ -104,13 +115,19 @@ def _candidates(text: str, claim: str, top_k: int = 4) -> list[str]:
         # overlap is low — that is often exactly where a refutation lives.
         if _ASSESSING.search(sent) or _NEGATION.search(sent):
             overlap += 0.25
+        # Search extraction truncates mid-sentence ("...according to a"). A
+        # fragment can lose the qualifier that changes its meaning, so complete
+        # sentences are preferred when one is available.
+        if not re.search(r"[.!?\"\u201d')\]]\s*$", sent):
+            overlap *= 0.8
         scored.append((overlap, sent))
 
     scored.sort(key=lambda x: x[0], reverse=True)
     return [s for score, s in scored[:top_k] if score > 0] or sentences(text)[:1]
 
 
-def _candidate_sentences(doc_title: str, text: str, claim: str, top_k: int) -> list[str]:
+def _candidate_sentences(doc_title: str, text: str, claim: str, top_k: int,
+                         key_findings: str | None = None) -> list[str]:
     """Headline first, then body sentences.
 
     A Reuters article titled "Fed forecasts see latest hike followed by another
@@ -120,6 +137,11 @@ def _candidate_sentences(doc_title: str, text: str, claim: str, top_k: int) -> l
     0.884, flipping the verdict.
     """
     out: list[str] = []
+    # A structured abstract's RESULTS and CONCLUSIONS are where a systematic
+    # review states its verdict. Scoring them first stops the selector
+    # preferring a background sentence that merely mentions the intervention.
+    if key_findings:
+        out.extend(sentences(key_findings)[:top_k])
     title = (doc_title or "").strip()
     if len(title) > 20 and not _JUNK.search(title):
         out.append(title)
@@ -150,9 +172,33 @@ def assign_tier(doc: RawDocument, category: str, jurisdiction: str | None) -> Ti
 
     if doc.channel == "literature":
         return "peer_reviewed"
-    if doc.channel == "authority":
-        return "authority"
+
+    # BUG FIX: tier is earned by the DOMAIN, never by the channel that fetched
+    # it. The authority channel previously granted `authority` to anything it
+    # returned — a supplement retailer (metagenics.ie) was tiered as a medical
+    # authority, cited as the sole support, and satisfied the expected-tier
+    # check that should have flagged the claim as overstated.
+    #
+    # A credible outlet from ANOTHER category's pack (Reuters on a medical
+    # claim) is real journalism but not a domain authority here: `reporting`.
+    if _in_any_pack(host):
+        return "reporting"
     return "reporting" if re.search(r"\.(gov|edu|ac\.uk)$", host) else "low"
+
+
+def _in_any_pack(host: str) -> bool:
+    from ..config import source_packs
+
+    for pack in source_packs().values():
+        lists = [pack.get(k, []) for k in (
+            "authority", "definitional", "independent_analysis")]
+        for juris in (pack.get("jurisdictions") or {}).values():
+            lists += [juris.get(k, []) for k in ("authority",
+                                                 "definitional", "independent_analysis")]
+        for domains in lists:
+            if any(host == d or host.endswith("." + d) for d in domains):
+                return True
+    return False
 
 
 def assign_role(text: str) -> Role:
@@ -204,6 +250,114 @@ def _stance_from_rating(rating: str) -> tuple[str, float] | None:
     return None
 
 
+# Hedged evidence cannot fully support an unhedged claim. "Supplements MAY
+# HELP to prevent" was graded as supporting "supplements PREVENT"; "some trials
+# found a protective effect and others did not" was graded as support at 0.886.
+_HEDGE = re.compile(
+    r"\b(may|might|could|can help|possibly|potentially|appears? to|suggests?|"
+    r"suggested|some (studies|trials|research|evidence)|mixed|inconclusive|"
+    r"preliminary|limited evidence|associated with|linked to|others (did|do) not|"
+    r"not all|in some)\b", re.I)
+
+
+# Categorical claims versus partial effects. "Reduces risk by up to 12%" was
+# graded as supporting "prevents" at 0.887. The hedge check caught "may" but
+# not this: the evidence is unhedged and still describes a much weaker effect
+# than the claim asserts. A 12% reduction is not prevention.
+_CATEGORICAL = re.compile(
+    r"\b(prevents?|prevented|cures?|cured|stops?|eliminates?|eradicates?|"
+    r"guarantees?|always|never|completely|entirely|100\s?%|proven to)\b", re.I)
+_PARTIAL = re.compile(
+    r"\b(reduc\w*|lower\w*|decreas\w*|cut)\b[^.]{0,40}\b(risk|rate|odds|incidence|chance)\b"
+    r"|\bby up to\b|\b\d{1,2}(?:\.\d+)?\s?(?:%|per ?cent)|\b(modest|small|slight|marginal|"
+    r"partial|some protection|minor)\b", re.I)
+
+
+def hedge_mismatch(premise: str, claim: str) -> bool:
+    """Evidence is weaker than the claim, in either of two ways:
+
+    - it HEDGES ("may help", "some trials found") where the claim does not;
+    - it describes a PARTIAL effect ("reduced risk by 12%") where the claim is
+      categorical ("prevents").
+    """
+    hedged = bool(_HEDGE.search(premise)) and not _HEDGE.search(claim)
+    partial = bool(_CATEGORICAL.search(claim)) and bool(
+        _PARTIAL.search(premise))
+    return hedged or partial
+
+
+# Headlines overclaim. "Study CONFIRMS vitamin D prevents..." heads an article
+# whose body reports mixed results. A headline is still worth scoring — it is
+# often the clearest statement of an article's point — but at a discount.
+HEADLINE_DISCOUNT = 0.75
+
+# Listing findings sentences first was not enough: selection picks the highest
+# NLI score, not the first candidate, so a background sentence with good word
+# overlap still won. A systematic review's RESULTS and CONCLUSIONS are where
+# its verdict lives, so they are boosted in the selection.
+FINDINGS_BOOST = 1.4
+
+# PubMed files sample sizes under RESULTS, so the findings boost lifted "The
+# analysis included 43 RCTs with 49320 participants" — a description of the
+# study, not of what it found.
+_STUDY_DESCRIPTION = re.compile(
+    r"\b(?:we (?:searched|included|screened|identified)|(?:were|was) included"
+    r"|the (?:analysis|review|search|study) included|comprised"
+    r"|\d+\s+(?:RCTs?|trials?|studies|participants|patients|articles))\b", re.I)
+# ...unless the sentence also says what happened.
+_EFFECT_LANGUAGE = re.compile(
+    r"\b(effect|impact|risk|incidence|reduc\w*|prevent\w*|associat\w*|significant"
+    r"|outcome|benefit|protect\w*|increase[ds]?|decrease[ds]?|odds|hazard)\b", re.I)
+STUDY_DESCRIPTION_PENALTY = 0.5
+
+
+def is_study_description(sentence: str) -> bool:
+    """Describes the study rather than its result."""
+    return bool(_STUDY_DESCRIPTION.search(sentence)) and not _EFFECT_LANGUAGE.search(sentence)
+
+
+# A statistically null finding is not a logical contradiction — "no
+# significant effect" is the absence of a demonstrated effect, and an
+# MNLI-trained model reasonably scores it as neutral. But against a
+# CATEGORICAL efficacy claim ("prevents", "cures"), a null result in the
+# peer-reviewed literature is precisely the evidence that matters. A 2024
+# meta-analysis reporting "no significant effect of vitamin D supplementation
+# on ARTI incidence" scored `insufficient` at 0.104.
+# "no Vitamin D impact on outcomes including respiratory infections" did not
+# match, because the pattern required the literal word "significant". Up to
+# three words may now sit between the negation and the outcome noun — but not
+# safety words, since "no adverse effects" is a finding about harm, not about
+# efficacy, and must never be read as refuting an efficacy claim.
+_NULL_RESULT = re.compile(
+    r"\b(?:no|not)\s+"
+    r"(?:(?!adverse|side|harmful|serious|safety|toxic|unexpected)\w+\s+){0,3}"
+    r"(?:significant\s+)?"
+    r"(?:effect|impact|difference|benefit|reduction|association|protection|protective)\b"
+    r"|\bdid not (?:significantly )?(?:reduce|prevent|lower|decrease|affect|improve|protect)"
+    r"|\b(?:was|were) not (?:significantly )?(?:associated|effective|protective)"
+    r"|\bnot statistically significant"
+    r"|\bfailed to (?:reduce|prevent|show|demonstrate)"
+    r"|\b(?:revealed|showed|found|reported) no\b", re.I)
+
+# A null result in a SUBGROUP says less about the general claim.
+_SUBGROUP = re.compile(
+    r"\b(subgroups?|in (ethnic|older|younger|elderly)|among (those|patients|participants) with)\b", re.I)
+
+NULL_RESULT_CONFIDENCE = 0.70
+NULL_SUBGROUP_CONFIDENCE = 0.58
+
+
+def null_result_against(sentence: str, claim: str) -> float | None:
+    """Confidence that a literature finding refutes a categorical claim, or None.
+
+    Deliberately narrow: only a categorical claim, only an explicit null
+    phrase. Everything else stays with the NLI model. This is a rule, not a
+    measurement, and should be validated on the claim set like the weights."""
+    if not _CATEGORICAL.search(claim) or not _NULL_RESULT.search(sentence):
+        return None
+    return NULL_SUBGROUP_CONFIDENCE if _SUBGROUP.search(sentence) else NULL_RESULT_CONFIDENCE
+
+
 def _stance_from_probs(p: dict[str, float], min_conf: float) -> tuple[Stance, float]:
     ent, con = p.get("entailment", 0.0), p.get("contradiction", 0.0)
     if ent >= min_conf and ent > con:
@@ -238,8 +392,14 @@ async def grade(
 
     pairs: list[tuple[str, str]] = []
     index: list[tuple[int, str]] = []
+    findings_sents: set[tuple[int, str]] = set()
     for di, doc in enumerate(docs):
-        for sent in _candidate_sentences(doc.title, doc.text, stance_claim, max_per_doc):
+        from_findings = set(sentences(doc.key_findings)
+                            ) if doc.key_findings else set()
+        for sent in _candidate_sentences(doc.title, doc.text, stance_claim, max_per_doc,
+                                         key_findings=doc.key_findings):
+            if sent in from_findings:
+                findings_sents.add((di, sent))
             # The premise carries three things the sentence alone does not.
             #
             # TITLE gives scope. A WHO page titled "first cases confirmed in
@@ -284,10 +444,18 @@ async def grade(
 
     probs = await nli.classify_async(pairs)
 
-    # Keep the single strongest sentence per document.
+    # Keep the single strongest sentence per document — with headlines
+    # discounted, so a punchy title cannot outrank a hedged body sentence that
+    # actually describes the evidence.
     best: dict[int, tuple[float, str, dict[str, float]]] = {}
     for (di, sent), p in zip(index, probs):
         strength = max(p.get("entailment", 0.0), p.get("contradiction", 0.0))
+        if (di, sent) in findings_sents:
+            strength *= FINDINGS_BOOST
+        elif sent.strip() == (docs[di].title or "").strip():
+            strength *= HEADLINE_DISCOUNT
+        if is_study_description(sent):
+            strength *= STUDY_DESCRIPTION_PENALTY
         if di not in best or strength > best[di][0]:
             best[di] = (strength, sent, p)
 
@@ -297,6 +465,21 @@ async def grade(
         doc = docs[di]
         stance, conf = _stance_from_probs(p, min_conf)
 
+        if sent.strip() == (doc.title or "").strip():
+            conf *= HEADLINE_DISCOUNT
+
+        # Literature only: a null finding against a categorical efficacy claim.
+        if doc.channel == "literature" and stance != "refutes":
+            null_conf = null_result_against(sent, stance_claim)
+            if null_conf is not None:
+                stance, conf = "refutes", null_conf
+
+        # A hedged premise supports a hedged claim, not a categorical one.
+        if stance == "supports" and hedge_mismatch(sent, stance_claim):
+            conf *= 0.5
+        if stance in ("supports", "refutes") and conf < min_conf:
+            stance = "insufficient"
+
         # A fact-checker's published rating is a direct verdict — but ONLY if
         # they reviewed the same claim. ClaimReview search returns loosely
         # related claims: searching "Covid originated from China" returns
@@ -304,7 +487,7 @@ async def grade(
         # for Chinese-Originated Viral Infectious Disease". Inheriting a
         # rating from a different claim produces a confident wrong verdict,
         # which is the worst failure this system can have.
-        claim_match = 1.0
+        claim_match: float | None = None   # only meaningful for fact-checks
         if doc.channel == "prior_check":
             claim_match = round(float(match_scores.get(di, 0.0)), 3)
             rated = _stance_from_rating(doc.prior_rating or "")
@@ -333,7 +516,10 @@ async def grade(
                 sub_claim_id=sub_claim_id,
                 url=doc.url,
                 title=doc.title,
-                quote=sent[:500],
+                # A truncated quote is marked as such rather than presented as
+                # a whole sentence.
+                quote=(sent[:500] if re.search(r"[.!?\"\u201d')\]]\s*$", sent[:500])
+                       else sent[:500].rstrip(" ,;:-[") + " …"),
                 published_date=doc.published_date,
                 source_domain=doc.source_domain,
                 channel=doc.channel,
@@ -344,8 +530,13 @@ async def grade(
                 # so scanning the full text marked almost everything as
                 # `reports` — which then tripped the "everyone is just
                 # repeating this" abstention and killed valid claims.
-                role="assesses" if doc.channel == "prior_check" else assign_role(
-                    sent),
+                # Peer-reviewed research evaluates a hypothesis — that is what
+                # the genre IS. Every paper was being scored `asserts` (weight
+                # 0.4) because its findings sentence contains no phrase like
+                # "our analysis found", so a meta-analysis directly on the
+                # question counted for less than a news article.
+                role=("assesses" if doc.channel in ("prior_check", "literature")
+                      else assign_role(sent)),
                 stance_confidence=round(float(conf), 3),
                 claim_match=claim_match,
                 retracted=doc.retracted,

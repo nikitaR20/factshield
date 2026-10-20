@@ -56,6 +56,11 @@ scoring:
   # two independent ones clear this bar and one does not. That is roughly the
   # right place to draw the line.
   min_total_weight: 0.35
+  # Total weight at which a score is allowed to reach its full ratio. Below it
+  # the score is shrunk toward 50 in proportion. Roughly: three or four strong,
+  # independent, agreeing sources. Like every constant in this file it is
+  # chosen, not fitted — sweep it against the claim set before reporting.
+  saturation_weight: 1.2
   # Within this band the sides are treated as genuinely contested.
   contested_band: [35, 65]
   # Retracted sources are excluded from scoring entirely.

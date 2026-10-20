@@ -203,7 +203,7 @@ async def check(
     # -------------------------------------------------------- retrieval
     retrieval_cfg = models().get("retrieval", {})
     results = await asyncio.gather(
-        *[retrieve(c.text, tri.category, tri.jurisdiction)
+        *[retrieve(c.text, tri.category, tri.jurisdiction, concepts=c.search_concepts or None)
           for c in tri.sub_claims],
         return_exceptions=True,
     )
@@ -275,9 +275,37 @@ async def check(
             score, state, items, attribution_extracted=claim.attribution_extracted
         )
 
+        # Too little evidence to score IS an abstention. Previously this path
+        # returned `unresolved` with `abstained: false`, called the model
+        # anyway, and got back `expert_sources_disagree` when no experts had
+        # disagreed. Those labels are what the analysis counts, so they must
+        # agree with the evidence. Stopping here also saves the model call.
+        if score is None:
+            verdicts.append(
+                SubClaimVerdict(
+                    sub_claim_id=claim.id, sub_claim_text=claim.text,
+                    claim_verdict="unresolved",
+                    evidence_standing=ev.standing_for_abstention(state, items),
+                    support_score=None, score_basis=basis,
+                    abstained=True,
+                    abstention_reason=(
+                        "Sources were found, but too few took a clear position "
+                        "to support a verdict."
+                    ),
+                    explanation=stages.describe_evidence(items, state),
+                    cited_evidence_ids=[i.id for i in items
+                                        if i.stance in ("supports", "refutes")][:3],
+                )
+            )
+            continue
+
         pattern, explanation, cited, _ = await stages.explain(
             claim, items, state, verdict, standing, max_items=max_items
         )
+
+        # The model picks a pattern that describes the evidence. Reject any
+        # pattern the evidence plainly contradicts.
+        pattern = scoring.validate_pattern(pattern, items)
 
         # One-directional: the model may weaken the computed verdict, never
         # strengthen it. See scoring.apply_pattern_downgrade.

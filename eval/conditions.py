@@ -92,8 +92,11 @@ async def run_retrieval_condition(record: dict, condition: str) -> dict:
         if reason:
             results.append({
                 "condition": condition, "sub_claim_id": sub.id,
-                "claim_verdict": "unresolved", "evidence_standing": "unestablished",
-                "support_score": None, "abstained": True, "n_evidence": len(items),
+                "claim_verdict": "unresolved",
+                "evidence_standing": ev.standing_for_abstention(state, items),
+                "support_score": None, "abstained": True,
+                "abstain_kind": ev.abstention_kind(state, items),
+                "n_evidence": len(items),
             })
             continue
 
@@ -115,6 +118,16 @@ async def run_retrieval_condition(record: dict, condition: str) -> dict:
         verdict, standing = scoring.derive_verdict(
             score, state, items, attribution_extracted=sub.attribution_extracted
         )
+        if score is None:
+            results.append({
+                "condition": condition, "sub_claim_id": sub.id,
+                "claim_verdict": "unresolved",
+                "evidence_standing": ev.standing_for_abstention(state, items),
+                "support_score": None, "score_basis": basis, "abstained": True,
+                "abstain_kind": ev.abstention_kind(state, items, scored=False),
+                "n_evidence": len(items),
+            })
+            continue
         results.append({
             "condition": condition, "sub_claim_id": sub.id,
             "claim_verdict": verdict, "evidence_standing": standing,
