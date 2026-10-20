@@ -18,14 +18,18 @@ Models, per outcome (correct, confidently_wrong, committed):
    intervals printed are mean +/- 1.96 SD of an approximate posterior.
 
    The fit method matters. On synthetic data where this exact model is the
-   true model (100 datasets, `--synthetic --reps 100`), the default
-   variational fit (`fit_vb`) gave "95%" intervals that covered the true
-   condition effects only about two-thirds of the time and called a true null
-   effect non-zero in about a third of datasets. The Laplace fit (`fit_map`,
-   SDs from the inverse Hessian) covered at 94-96% with 4-5% false positives.
+   true model (`--synthetic --reps 100`, run 0, 120 claims in 40 sources):
+     fit_vb  (variational): "95%" intervals covered the true condition effects
+             69-76% of the time; a true null was called non-zero in 25-31%.
+     fit_map (Laplace, SDs from the inverse Hessian): covered 96-99%; a true
+             null was called non-zero in 1%. Slightly conservative.
    So `laplace` is the default (config: analysis.mixed_method); `vb` is kept
-   only to reproduce that comparison. For a conventional ML fit, lme4::glmer
-   in R is the reference implementation; see the report.
+   only to reproduce that comparison. At that synthetic size the Laplace fit
+   detected a -0.6 log-odds condition effect in 65% of datasets and a -0.4
+   interaction in 20%: the design is underpowered for interactions of that
+   size. The claim-level SD was often estimated at 0 (a boundary estimate
+   with 3 claims per source). For a conventional ML fit, lme4::glmer in R is
+   the reference implementation.
 
 2. GEE (run 0), clustered on source, exchangeable working correlation, robust SEs.
    A frequentist cross-check with p-values. Its coefficients are
