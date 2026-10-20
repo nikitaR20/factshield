@@ -1,0 +1,4 @@
+# Study-only dependencies, on top of backend/requirements.txt.
+# statsmodels brings numpy, scipy, pandas and patsy with it; the study uses
+# numpy and pandas directly but adds nothing beyond what statsmodels pulls in.
+statsmodels==0.15.0
