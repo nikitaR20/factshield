@@ -26,9 +26,13 @@ CONFIG_PATH = STUDY_DIR / "config.yaml"
 
 @functools.lru_cache(maxsize=None)
 def config(path: str | None = None) -> dict:
-    p = Path(path) if path else CONFIG_PATH
+    """study/config.yaml, or the file named by STUDY_CONFIG (for dry runs
+    against fixtures; the real study always uses the committed file)."""
+    p = Path(path or os.environ.get("STUDY_CONFIG") or CONFIG_PATH)
     with p.open() as fh:
-        return yaml.safe_load(fh)
+        cfg = yaml.safe_load(fh)
+    cfg["_config_file"] = str(p)
+    return cfg
 
 
 def resolve(rel: str) -> Path:
@@ -63,7 +67,10 @@ def git_commit() -> str:
 
 
 def provenance() -> dict[str, Any]:
-    return {"seed": config()["seed"], "git_commit": git_commit()}
+    prov = {"seed": config()["seed"], "git_commit": git_commit()}
+    if config()["_config_file"] != str(CONFIG_PATH):
+        prov["config_file"] = config()["_config_file"]   # a non-default config is never silent
+    return prov
 
 
 def now_iso() -> str:

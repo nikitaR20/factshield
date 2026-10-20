@@ -390,7 +390,6 @@ async def complete(model_key: str, system: str, user: str, *, live_search: bool 
     """
     cfg = model_cfg(model_key)
     r = CallResult(provider=cfg["provider"], model_requested=cfg["model"], timestamp=now_iso())
-    r.temperature_sent = cfg.get("temperature")
 
     if cfg["model"] == "CHANGE_ME":
         r.error = f"model for {model_key!r} is still CHANGE_ME in study/config.yaml"
@@ -414,10 +413,10 @@ async def complete(model_key: str, system: str, user: str, *, live_search: bool 
 
     if r.raw is not None:
         r.tool_calls = find_tool_use(r.raw)
-    if "temperature" not in r.params_sent and r.provider != "gemini":
-        r.temperature_sent = None
-    if r.provider == "gemini" and "temperature" not in (r.params_sent.get("generationConfig") or {}):
-        r.temperature_sent = None
+    # Derived only from what was actually put in the request. No request, or
+    # no temperature field in it, means None.
+    sent = r.params_sent.get("generationConfig", r.params_sent) if r.params_sent else {}
+    r.temperature_sent = sent.get("temperature")
     if r.error is None and not r.text:
         r.error = f"empty response text (finish_reason={r.finish_reason})"
     return r

@@ -147,6 +147,15 @@ def test_change_me_refused(monkeypatch):
     monkeypatch.setitem(models.config()["models"]["gemini"], "model", "CHANGE_ME")
     r = run(models.complete("gemini", "s", "u"))
     assert "CHANGE_ME" in r.error
+    assert r.temperature_sent is None and r.params_sent == {}   # nothing was sent
+
+
+def test_gemini_temperature_recorded_from_request():
+    def handler(req):
+        return httpx.Response(200, json={"modelVersion": "g", "candidates": [
+            {"content": {"parts": [{"text": "Verdict: refuted"}]}, "finishReason": "STOP"}]})
+    r = run(models.complete("gemini", "s", "u", client=client_for(handler)))
+    assert r.temperature_sent == 0
 
 
 def test_missing_key_is_an_error_not_a_crash(monkeypatch):
