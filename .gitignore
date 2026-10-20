@@ -77,3 +77,14 @@ desktop.ini
 *.tar.gz
 tmp/
 scratch/
+# ---------------------------------------------------------------- study
+# The thesis experiment. Packs and responses are regenerable from frozen
+# inputs plus the API, and responses can be large. Claim sets are the frozen
+# inputs and MUST stay in version control — the global `*.jsonl` rule above
+# would otherwise silently ignore them.
+study/packs/
+study/responses/
+study/results/
+study/**/*.csv
+!study/claims/*.jsonl
+!study/tests/fixtures/*.jsonl

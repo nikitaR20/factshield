@@ -1,0 +1,140 @@
+# Study configuration. Every tunable lives here; the code has no magic numbers.
+#
+# This file is part of the method. Commit it, and treat a change after the
+# pilot as a protocol deviation to be reported.
+
+seed: 20261019
+
+# Pinned prompt version. Prompts live in study/prompts/<name>.<version>.txt and
+# are published verbatim with the thesis. Unlike the product, the study never
+# picks "the latest" prompt automatically: a new file must not change a run.
+prompt_version: v1
+
+paths:
+  claims: study/claims             # *.jsonl, version-controlled
+  packs: study/packs               # frozen evidence packs (gitignored)
+  responses: study/responses       # raw model output (gitignored)
+  results: study/results           # scored rows, summaries, worksheets
+
+# ------------------------------------------------------------------ models
+# MODEL NAMES ARE PLACEHOLDERS ON PURPOSE. Fill them from each provider's
+# model list on the day the pilot starts and do not change them afterwards.
+# The runner refuses to call a model whose name is still CHANGE_ME.
+#
+# temperature: a number is sent as-is; null means "do not send the field".
+# What was actually sent is recorded in every response row.
+#
+#   * OpenAI GPT-5-family reasoning models reject any temperature other than
+#     the default; GPT-5.1 and later accept it only at reasoning effort `none`.
+#     Use null for those, or set reasoning_effort: none.
+#   * Google's Gemini 3 guide recommends leaving temperature at 1.0 and says
+#     lower values can cause looping or degraded reasoning. 0 is still sent
+#     below because the study protocol asks for it — decide this explicitly
+#     before the pilot and record the decision.
+#   * Groq: do NOT use a `groq/compound*` id (those systems search server-side).
+#     Groq's built-in-tools page says the gpt-oss models can call built-in tools
+#     on their own; if you pick a gpt-oss model, the search-leak probe is the
+#     only evidence that it did not. A non-gpt-oss open-weight model avoids
+#     the question.
+models:
+  openai:
+    provider: openai
+    model: CHANGE_ME
+    temperature: 0
+    reasoning_effort: null         # e.g. none | low; null = not sent
+    max_output_tokens: 1500
+    timeout_s: 90
+  gemini:
+    provider: gemini
+    model: CHANGE_ME
+    temperature: 0
+    thinking_level: null           # e.g. low; null = not sent
+    max_output_tokens: 1500
+    timeout_s: 90
+  groq:
+    provider: groq
+    model: CHANGE_ME
+    temperature: 0
+    reasoning_effort: null
+    max_output_tokens: 1500
+    timeout_s: 90
+  # Offline stand-in. Makes no network call and is never part of the study.
+  # Its rows are marked provider=stub. Used for tests and for showing the
+  # shape of the data before keys exist.
+  stub:
+    provider: stub
+    model: stub-offline
+    temperature: 0
+    max_output_tokens: 1500
+    timeout_s: 1
+
+# Models included when --models is not given. `stub` is deliberately absent.
+study_models: [openai, gemini, groq]
+
+# Substrings that mark a model id as a search product. A model whose id
+# contains any of these is refused in closed-book mode.
+search_model_markers: ["search", "groq/compound", "sonar"]
+
+retry:
+  max_attempts: 6
+  base_delay_s: 2.0
+  max_delay_s: 60.0
+  # 429, 408 and 5xx are retried with exponential backoff and full jitter.
+  # Any other 4xx (404 wrong model, 400 bad parameter, 401/403 bad key) fails
+  # immediately: retrying cannot fix it and hides the cause.
+  retry_statuses: [408, 429, 500, 502, 503, 504]
+
+conditions: [free, format, citation]
+
+# Verdict labels shown to the model, identical in every condition.
+labels:
+  supported: "supported"
+  refuted: "refuted"
+  nei: "not enough evidence"
+
+# ------------------------------------------------------------------- packs
+packs:
+  max_passages: 8
+  max_chars_per_passage: 1500
+  # Study claims carry a `domain`; FactShield's retrieval wants a `category`.
+  # In the product, triage chooses the category with an LLM. The study must
+  # not call triage, so the mapping is fixed here and published.
+  domain_to_category:
+    health: medical
+    medicine: medical
+    science: science
+    climate: science
+    politics: political
+    economics: financial
+    finance: financial
+    business: financial
+    default: general
+
+# ------------------------------------------------------------------- probes
+probe:
+  closed_book_repeats: 2
+  leak_check:
+    n_claims: 6
+    # Only claims whose alteration is NOT detectable from the surface text:
+    # an implausible number can be refuted without knowledge or search.
+    require_not_surface_detectable: true
+    claim_set: B
+    alpha: 0.05
+
+# ------------------------------------------------------------------- runner
+run:
+  concurrency: 4
+  live_search:
+    n_claims: 10                   # small, labelled subset; never the default
+
+# ------------------------------------------------------------------- coding
+citations:
+  sample_size: 150
+
+analysis:
+  bootstrap_reps: 2000
+  ci_level: 0.95
+  synthetic:
+    n_sources: 40
+    claims_per_source: 3
+    n_repeats: 2
