@@ -172,8 +172,8 @@ packs:
   # copying, not checking. Packs record this as a warning either way; listing
   # a channel or domain here removes those documents BEFORE freezing.
   # Decide before building: changing it later means rebuilding every pack.
-  exclude_channels: []             # e.g. [prior_check]
-  exclude_domains: []              # e.g. [snopes.com, politifact.com]
+  exclude_channels: [prior_check]
+  exclude_domains: [snopes.com, politifact.com, fullfact.org]            # e.g. [snopes.com, politifact.com]
   # Study claims carry a `domain`; FactShield's retrieval wants a `category`.
   # In the product, triage chooses the category with an LLM. The study must
   # not call triage, so the mapping is fixed here and published.
