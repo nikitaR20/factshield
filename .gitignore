@@ -87,7 +87,4 @@ study/responses/
 study/results/
 study/**/*.csv
 !study/claims/*.jsonl
-!study/claims/*.csv
-!study/claims/*.tsv
-!study/tests/fixtures/*.csv
 !study/tests/fixtures/*.jsonl

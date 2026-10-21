@@ -1,0 +1,10 @@
+# Study-only ignore rules. These override the repository's root .gitignore
+# for files under study/ (git gives a nested .gitignore priority).
+#
+# The root file ignores study/**/*.csv (scoring outputs) and every *.jsonl.
+# Claim sets are frozen INPUTS and must stay in version control.
+!claims/*.csv
+!claims/*.tsv
+!claims/*.jsonl
+!tests/fixtures/*.csv
+!tests/fixtures/*.jsonl
