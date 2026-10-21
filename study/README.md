@@ -22,6 +22,7 @@ python -m study.claimsets check          # rating -> label mapping, exclusions
 #    decide unmapped ratings and packs.exclude_channels in config.yaml NOW
 python -m study.packs build              # retrieve once, freeze, hash
 python -m study.packs verify
+python -m study.packs summary            # pack sizes per gold label, channels, domains
 #    audit gold labels against the frozen packs before going further
 python -m study.probe closed-book        # what each model knows unaided
 python -m study.probe leak-check         # is anything retrieving server-side?
@@ -68,7 +69,10 @@ python -m pytest study/tests -q
   claims often retrieve their own fact-check (the `prior_check` channel
   returns the rating verbatim). Packs warn `contains_factcheck_verdict`;
   `packs.exclude_channels` / `exclude_domains` remove those documents before
-  freezing. One claim per source makes the source and claim intercepts the
+  freezing. Because FactShield fetches only 3 results per channel, excluded
+  sites could use up every slot; `packs.fetch_per_channel` makes the study
+  call the same app.retrieval channels with a larger limit and exclude after
+  fetching (null restores the product's retrieve()). One claim per source makes the source and claim intercepts the
   same, so the mixed model keeps one.
 - **Mixed-model fit.** statsmodels' binomial mixed model is Bayesian. Its
   variational fit under-covered badly on synthetic data (69–76% for nominal
