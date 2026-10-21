@@ -117,3 +117,23 @@ def test_mixed_model_one_claim_per_source():
     m = analyse.fit_mixed(df, "correct", "laplace")
     assert "sd_claim" in set(m["term"]) and "sd_source" not in set(m["term"])
     assert isinstance(m, pd.DataFrame)
+
+
+def test_mixed_encoding_file_decodes_and_reports(tmp_path, capsys):
+    """The Windows error: 'charmap' codec can't decode byte 0x9d."""
+    f = tmp_path / "mixed.csv"
+    f.write_bytes(
+        b"claim,rate\n"
+        + "\u201cExampleton\u201d banned cars.,false\n".encode("utf-8")   # UTF-8 curly quotes (..9D)
+        + "Exampleton\u2019s caf\xe9 closed.,true\n".encode("cp1252")       # a Windows row
+        + b"Stray byte \x9d here.,false\n"                                  # invalid in both
+    )
+    claims, _ = claimsets.read_csv_file(f)
+    assert claims[0]["claim"] == "\u201cExampleton\u201d banned cars."
+    assert claims[1]["claim"] == "Exampleton\u2019s caf\xe9 closed."
+    assert "\ufffd" in claims[2]["claim"]
+    rep = claimsets._DECODE_REPORT[str(f)]
+    assert rep == {"encoding": "mixed", "cp1252_lines": [3], "replaced_lines": [4]}
+    claimsets.check(tmp_path)
+    out = capsys.readouterr().out
+    assert "not pure UTF-8" in out and "UNDECODABLE" in out and "mixed-0003" in out

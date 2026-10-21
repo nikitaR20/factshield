@@ -31,7 +31,7 @@ def config(path: str | None = None) -> dict:
     """study/config.yaml, or the file named by STUDY_CONFIG (for dry runs
     against fixtures; the real study always uses the committed file)."""
     p = Path(path or os.environ.get("STUDY_CONFIG") or CONFIG_PATH)
-    with p.open() as fh:
+    with p.open(encoding="utf-8") as fh:
         cfg = yaml.safe_load(fh)
     cfg["_config_file"] = str(p)
     return cfg
@@ -98,7 +98,7 @@ def read_jsonl(p: Path) -> list[dict]:
     if not p.exists():
         return []
     rows = []
-    with p.open() as fh:
+    with p.open(encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
             line = line.strip()
             if not line:

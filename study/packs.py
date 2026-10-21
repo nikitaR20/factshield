@@ -261,7 +261,7 @@ async def build_all(only: set[str] | None, rebuild: str | None,
             flagged.append((c["id"], pack["flags"]))
     with_verdict = [c["id"] for c in todo if pack_path(c["id"]).exists()
                     and any(w.startswith("contains_factcheck_verdict")
-                            for w in json.loads(pack_path(c["id"]).read_text()).get("warnings", []))]
+                            for w in json.loads(pack_path(c["id"]).read_text(encoding="utf-8")).get("warnings", []))]
     if with_verdict:
         print(f"\n{len(with_verdict)} packs contain a published fact-check rating "
               f"(warning, not excluded). If these claims come from a fact-check table, the "

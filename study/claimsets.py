@@ -78,13 +78,44 @@ def _rating_table() -> tuple[dict[str, str], frozenset[str]]:
     return table, excluded
 
 
+_DECODE_REPORT: dict[str, dict] = {}
+
+
 def _read_text(p: Path) -> str:
+    """Decode a claims file without letting one bad row break it.
+
+    Fact-check exports are often MIXED: mostly UTF-8 (curly quotes are
+    E2 80 9C / E2 80 9D) with some rows pasted from Windows (cp1252), or a
+    stray byte. Decoding the whole file as one encoding then fails, e.g.
+    "'charmap' codec can't decode byte 0x9d". So each line is decoded on its
+    own: UTF-8, else cp1252, else UTF-8 with the bad bytes replaced by U+FFFD.
+    Lines that needed a fallback are recorded and printed by `check`, because
+    a replaced character changes the claim text the models will see.
+    """
     raw = p.read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        raw = raw[3:]
     try:
-        return raw.decode("utf-8-sig")
+        text = raw.decode("utf-8")
+        _DECODE_REPORT[str(p)] = {"encoding": "utf-8", "cp1252_lines": [], "replaced_lines": []}
+        return text
     except UnicodeDecodeError:
-        # Excel on Windows saves "CSV" as cp1252 unless told otherwise.
-        return raw.decode("cp1252")
+        pass
+    out, cp, bad = [], [], []
+    for n, line in enumerate(raw.split(b"\n"), 1):
+        try:
+            out.append(line.decode("utf-8"))
+            continue
+        except UnicodeDecodeError:
+            pass
+        try:
+            out.append(line.decode("cp1252"))
+            cp.append(n)
+        except UnicodeDecodeError:
+            out.append(line.decode("utf-8", errors="replace"))
+            bad.append(n)
+    _DECODE_REPORT[str(p)] = {"encoding": "mixed", "cp1252_lines": cp, "replaced_lines": bad}
+    return "\n".join(out)
 
 
 def _dialect(text: str, suffix: str) -> csv.Dialect | type[csv.Dialect]:
@@ -227,6 +258,22 @@ def check(folder: Path) -> int:
     by_set = defaultdict(Counter)
     for c in claims:
         by_set[c["set"]][c["label"]] += 1
+    for f in files:
+        rep = _DECODE_REPORT.get(str(f), {})
+        if rep.get("encoding") == "mixed":
+            print(f"\nENCODING {f.name}: not pure UTF-8. Decoded line by line.")
+            if rep["cp1252_lines"]:
+                print(f"  read as Windows-1252 (check the characters look right): "
+                      f"file lines {rep['cp1252_lines'][:20]}"
+                      + (" ..." if len(rep["cp1252_lines"]) > 20 else ""))
+            if rep["replaced_lines"]:
+                print(f"  UNDECODABLE bytes replaced (U+FFFD): file lines {rep['replaced_lines'][:20]}"
+                      + (" ..." if len(rep["replaced_lines"]) > 20 else "")
+                      + "\n  Fix those rows (or re-save the file as 'CSV UTF-8') before building packs.")
+    with_bad = [c["id"] for c in claims if "\ufffd" in c["claim"]]
+    if with_bad:
+        print(f"  claims whose TEXT contains a replaced character: {with_bad[:20]}")
+
     print(f"\n{len(claims)} claims kept, {len(excluded)} rows excluded")
     for s, cnt in sorted(by_set.items()):
         print(f"  set {s}: " + ", ".join(f"{l}={cnt.get(l, 0)}" for l in GOLD_LABELS))
@@ -249,6 +296,13 @@ def check(folder: Path) -> int:
 
 
 def main() -> None:
+    # A Windows console (cp1252) cannot print every character in a claims
+    # file; never let the REPORT crash. File contents are unaffected.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("cmd", choices=["check"])
     ap.add_argument("--folder", default=None, help="defaults to paths.claims in config")

@@ -63,7 +63,7 @@ def _knew_unaided() -> dict:
     p = path("results") / "knew_unaided.csv"
     if not p.exists():
         return {}
-    with p.open() as fh:
+    with p.open(encoding="utf-8") as fh:
         return {(r["claim_id"], r["model"]): r["knew_unaided"] for r in csv.DictReader(fh)}
 
 
