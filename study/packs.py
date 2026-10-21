@@ -115,8 +115,18 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
                                                     concepts=concepts)
 
     passages = []
+    docs = [d.model_dump(mode="json") if hasattr(d, "model_dump") else dict(d) for d in docs]
+    n_returned = len(docs)
+    drop_ch = set(cfg.get("exclude_channels") or [])
+    drop_dom = [x.lower().removeprefix("www.") for x in cfg.get("exclude_domains") or []]
+
+    def _dropped(d: dict) -> bool:
+        dom = (d.get("source_domain") or "").lower().removeprefix("www.")
+        return d.get("channel") in drop_ch or any(dom == x or dom.endswith("." + x) for x in drop_dom)
+
+    removed = [d for d in docs if _dropped(d)]
+    docs = [d for d in docs if not _dropped(d)]
     for i, d in enumerate(docs[: cfg["max_passages"]], 1):
-        d = d.model_dump(mode="json") if hasattr(d, "model_dump") else dict(d)
         text = d.get("text") or ""
         kept = text[: cfg["max_chars_per_passage"]]
         findings = d.get("key_findings")
@@ -143,7 +153,9 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
         **provenance(),
         "retrieval": {
             **attempted,
-            "n_docs_returned": len(docs),
+            "n_docs_returned": n_returned,
+            "excluded_by_config": [{"url": str(d.get("url")), "channel": d.get("channel"),
+                                    "source_domain": d.get("source_domain")} for d in removed],
             "n_docs_kept": len(passages),
             "docs_per_channel": dict(Counter(p["channel"] for p in passages)),
             "search_concepts": concepts,
@@ -158,6 +170,11 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
     # Warnings are reported but do not exclude the claim (flags do).
     lost = [p["pid"] for p in passages if p["key_findings_in_text"] is False]
     pack["warnings"] = [f"key_findings_truncated:{','.join(lost)}"] if lost else []
+    verdicts = [p["pid"] for p in passages if p["channel"] == "prior_check"]
+    if verdicts:
+        # The pack holds a published fact-check rating. If the claim came from
+        # a fact-check table, this is likely its own answer key.
+        pack["warnings"].append(f"contains_factcheck_verdict:{','.join(verdicts)}")
     pack["pack_hash"] = content_hash(pack)
     return pack
 
@@ -242,6 +259,13 @@ async def build_all(only: set[str] | None, rebuild: str | None,
               + (f" warnings={pack['warnings']}" if pack["warnings"] else ""))
         if pack["flags"]:
             flagged.append((c["id"], pack["flags"]))
+    with_verdict = [c["id"] for c in todo if pack_path(c["id"]).exists()
+                    and any(w.startswith("contains_factcheck_verdict")
+                            for w in json.loads(pack_path(c["id"]).read_text()).get("warnings", []))]
+    if with_verdict:
+        print(f"\n{len(with_verdict)} packs contain a published fact-check rating "
+              f"(warning, not excluded). If these claims come from a fact-check table, the "
+              f"pack may hold their answer. See packs.exclude_channels in config.yaml.")
     if flagged:
         print(f"\n{len(flagged)} FLAGGED claims (excluded from runs unless --include-flagged):")
         for cid, fl in flagged:

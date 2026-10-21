@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -42,6 +44,8 @@ def resolve(rel: str) -> Path:
 
 
 def path(key: str) -> Path:
+    if key == "claims" and os.environ.get("STUDY_CLAIMS_DIR"):
+        return resolve(os.environ["STUDY_CLAIMS_DIR"])
     return resolve(config()["paths"][key])
 
 
@@ -70,6 +74,8 @@ def provenance() -> dict[str, Any]:
     prov = {"seed": config()["seed"], "git_commit": git_commit()}
     if config()["_config_file"] != str(CONFIG_PATH):
         prov["config_file"] = config()["_config_file"]   # a non-default config is never silent
+    if os.environ.get("STUDY_CLAIMS_DIR"):
+        prov["claims_dir"] = os.environ["STUDY_CLAIMS_DIR"]
     return prov
 
 
@@ -159,11 +165,29 @@ REQUIRED_CLAIM_FIELDS = ("id", "claim", "set", "label", "domain", "source_id")
 GOLD_LABELS = ("supported", "refuted", "not_enough_evidence")
 
 
+_reported_exclusions = False
+
+
 def load_claims(paths: Iterable[Path] | None = None) -> list[dict]:
-    if paths is None:
-        paths = sorted(path("claims").glob("*.jsonl"))
+    """All claims from the claims folder: *.jsonl as-is, *.csv/*.tsv through
+    study.claimsets (rows it cannot label are excluded and counted)."""
+    global _reported_exclusions
     claims: list[dict] = []
-    seen: set[str] = set()
+    if paths is None:
+        folder = path("claims")
+        paths = sorted(folder.glob("*.jsonl"))
+        from .claimsets import csv_files, load_csv_claims
+        if folder.is_dir() and csv_files(folder):
+            csv_claims, excluded = load_csv_claims(folder)
+            claims.extend(csv_claims)
+            if excluded and not _reported_exclusions:
+                _reported_exclusions = True
+                print(f"[study] {len(csv_claims)} CSV claims loaded, {len(excluded)} rows excluded "
+                      f"(see `python -m study.claimsets check`)", file=sys.stderr)
+    seen: set[str] = {c["id"] for c in claims}
+    if len(seen) != len(claims):
+        dup = [k for k, v in Counter(c["id"] for c in claims).items() if v > 1]
+        raise ValueError(f"duplicate claim ids in CSV files: {dup[:10]}")
     for p in paths:
         for row in read_jsonl(Path(p)):
             missing = [f for f in REQUIRED_CLAIM_FIELDS if f not in row]

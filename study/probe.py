@@ -220,8 +220,13 @@ def main() -> None:
     else:
         chosen = leak_claims(claims, seed)
         if not chosen:
-            raise SystemExit("no eligible leak-check claims (set B, gold supported/refuted, "
-                             "surface_detectable=false)")
+            lc = cfg["probe"]["leak_check"]
+            raise SystemExit(
+                f"no eligible leak-check claims: need set {lc['claim_set']!r} (probe.leak_check."
+                f"claim_set), gold supported/refuted"
+                + (", and surface_detectable=false. CSV claims without a surface_detectable column "
+                   "are 'unknown'; add the column or set require_not_surface_detectable: false"
+                   if lc["require_not_surface_detectable"] else ""))
         print(f"leak check on {[c['id'] for c in chosen]}")
         plan = [{"kind": "leak_check", "claim": c, "condition": "free", "model_key": m,
                  "run_index": 0, "live_search": False, "pack": None, "call_order": i}

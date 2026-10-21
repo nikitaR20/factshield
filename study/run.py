@@ -144,6 +144,12 @@ def select_claims(only: set[str] | None, include_flagged: bool) -> tuple[list[di
         except PackError as exc:
             excluded.append((c["id"], str(exc)))
             continue
+        if pk["claim"] != c["claim"]:
+            # Ids from CSV row numbers move if rows are reordered. Never pair a
+            # claim with another claim's evidence.
+            excluded.append((c["id"], "pack was built for different claim text; "
+                                      "claims file changed after packs were built"))
+            continue
         if pk["flags"] and not include_flagged:
             excluded.append((c["id"], f"flagged: {', '.join(pk['flags'])}"))
             continue

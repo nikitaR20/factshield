@@ -11,10 +11,80 @@ seed: 20261019
 prompt_version: v1
 
 paths:
-  claims: study/claims             # *.jsonl, version-controlled
+  # Folder holding the claim files: *.csv / *.tsv (see `claims.csv` below)
+  # and/or *.jsonl. Relative to the repo root, or an absolute path such as
+  # C:/Users/you/thesis/claims. The STUDY_CLAIMS_DIR environment variable
+  # overrides it, and is then written into every output's provenance.
+  claims: study/claims
   packs: study/packs               # frozen evidence packs (gitignored)
   responses: study/responses       # raw model output (gitignored)
   results: study/results           # scored rows, summaries, worksheets
+
+# ------------------------------------------------------------------ claims
+claims:
+  csv:
+    # CSV header -> field. Matching ignores case, extra spaces and curly
+    # apostrophes. `claim` and `rating` are required; the rest are optional.
+    columns:
+      claim: claim
+      rating: rate
+      question: question
+      comment: comment
+      whats_true: "what's true"
+      whats_false: "what's false"
+      whats_unknown: "what's unknown"
+      origin: origin
+      summary: summary
+      # Used if present, otherwise derived:
+      id: id
+      set: set
+      domain: domain
+      source_id: source_id
+      source_url: source_url
+      source_published: source_published
+      surface_detectable: surface_detectable
+
+    # THE GOLD LABEL. Fact-check ratings -> the study's three labels.
+    # Matching ignores case and punctuation. Only ratings that unambiguously
+    # mean one label are mapped. Run `python -m study.claimsets check` to see
+    # every rating in your files and where it went, and DECIDE the
+    # excluded ones before building packs; this table is part of the method.
+    #
+    # Caveat for the thesis: a fact-checker's "Unproven" means nobody could
+    # establish it; the study's not_enough_evidence means "not established BY
+    # THIS PACK". They coincide only if the pack holds no deciding evidence.
+    rating_to_label:
+      supported: ["true", "correct attribution", "legit", "correct"]
+      refuted: ["false", "misattributed", "fake", "pants on fire", "incorrect"]
+      not_enough_evidence: ["unproven"]
+    # Known ratings left out on purpose (counted as "excluded (config)").
+    # Move one into the table above if you decide how it maps.
+    excluded_ratings:
+      - mostly true
+      - mostly false
+      - half true
+      - mixture
+      - mixed
+      - unfounded          # "no evidence for it": closer to refuted than NEI; your call
+      - outdated
+      - miscaptioned
+      - satire
+      - labeled satire
+      - originated as satire
+      - legend
+      - lost legend
+      - scam
+      - research in progress
+      - recall
+      - misleading
+      - missing context
+    # File name -> set, e.g. {"snopes_2024.csv": A, "snopes_2026.csv": B}.
+    # Unlisted files use a `set` column if there is one, else the file name.
+    set_by_file: {}
+    # With no `domain` column, every claim gets this (a key of
+    # packs.domain_to_category). `general` searches the web without a
+    # subject-specific source pack.
+    default_domain: general
 
 # ------------------------------------------------------------------ models
 # MODEL NAMES ARE PLACEHOLDERS ON PURPOSE. Fill them from each provider's
@@ -96,6 +166,14 @@ labels:
 packs:
   max_passages: 8
   max_chars_per_passage: 1500
+  # Fact-check claims will often retrieve their OWN fact-check: the
+  # prior_check channel returns the publisher's rating ("... - Rating: False")
+  # and web search finds the article. A pack holding the answer key tests
+  # copying, not checking. Packs record this as a warning either way; listing
+  # a channel or domain here removes those documents BEFORE freezing.
+  # Decide before building: changing it later means rebuilding every pack.
+  exclude_channels: []             # e.g. [prior_check]
+  exclude_domains: []              # e.g. [snopes.com, politifact.com]
   # Study claims carry a `domain`; FactShield's retrieval wants a `category`.
   # In the product, triage chooses the category with an LLM. The study must
   # not call triage, so the mapping is fixed here and published.
