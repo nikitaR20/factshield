@@ -138,6 +138,10 @@ def fit_mixed(df: pd.DataFrame, outcome: str, method: str | None = None) -> pd.D
     method = method or config()["analysis"]["mixed_method"]
     f = _formula(df, outcome)
     vc = {"source": "0 + C(source_id)", "claim": "0 + C(claim_id)"}
+    if df.groupby("source_id")["claim_id"].nunique().max() == 1:
+        # One claim per source (e.g. one fact-check per row): the two
+        # intercepts are the same thing and cannot be separated. Keep one.
+        vc = {"claim": "0 + C(claim_id)"}
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         model = BinomialBayesMixedGLM.from_formula(f, vc, df)
