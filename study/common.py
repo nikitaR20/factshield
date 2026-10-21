@@ -26,13 +26,39 @@ REPO_ROOT = STUDY_DIR.parent
 CONFIG_PATH = STUDY_DIR / "config.yaml"
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """SafeLoader that rejects a key repeated in one mapping.
+
+    Plain YAML keeps the LAST of two equal keys without a word. In this
+    project that silently emptied the pack exclusions: `exclude_channels:
+    [prior_check]` was added above an older `exclude_channels: []`, and the
+    empty one won. A method setting must never be overridden invisibly.
+    """
+
+
+def _no_duplicates(loader, node, deep=False):
+    seen = {}
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise ValueError(
+                f"config: key {key!r} appears twice (lines {seen[key] + 1} and "
+                f"{key_node.start_mark.line + 1}). YAML would silently keep the second; "
+                f"delete one.")
+        seen[key] = key_node.start_mark.line
+    return loader.construct_mapping(node, deep=deep)
+
+
+_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicates)
+
+
 @functools.lru_cache(maxsize=None)
 def config(path: str | None = None) -> dict:
     """study/config.yaml, or the file named by STUDY_CONFIG (for dry runs
     against fixtures; the real study always uses the committed file)."""
     p = Path(path or os.environ.get("STUDY_CONFIG") or CONFIG_PATH)
     with p.open(encoding="utf-8") as fh:
-        cfg = yaml.safe_load(fh)
+        cfg = yaml.load(fh, Loader=_StrictLoader)
     cfg["_config_file"] = str(p)
     return cfg
 

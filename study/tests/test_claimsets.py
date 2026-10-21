@@ -86,6 +86,8 @@ def test_pack_verdict_warning_and_channel_exclusion(csv_folder, monkeypatch):
                 {"url": "https://news.example/y", "title": "News", "text": "Some news.",
                  "channel": "open_web", "source_domain": "news.example", "published_date": None}]
 
+    for k in ("exclude_channels", "exclude_domains", "exclude_url_patterns", "exclude_urls"):
+        monkeypatch.setitem(config()["packs"], k, [])
     asyncio.run(packs.build_all({"factchecks-0001"}, None, with_factcheck))
     p = packs.load_pack("factchecks-0001")
     assert "contains_factcheck_verdict:P1" in p["warnings"]

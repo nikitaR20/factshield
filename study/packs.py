@@ -37,6 +37,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import stat
 from collections import Counter
 from pathlib import Path
@@ -170,6 +171,25 @@ async def _default_retriever(claim: str, category: str, jurisdiction: str | None
     return docs
 
 
+def exclusion_reason(d: dict) -> str | None:
+    """Why config removes this document from a pack, or None to keep it."""
+    cfg = config()["packs"]
+    dom = (d.get("source_domain") or "").lower().removeprefix("www.")
+    url = str(d.get("url") or "")
+    if d.get("channel") in set(cfg.get("exclude_channels") or []):
+        return f"channel {d.get('channel')}"
+    for x in cfg.get("exclude_domains") or []:
+        x = x.lower().removeprefix("www.")
+        if dom == x or dom.endswith("." + x):
+            return f"domain {x}"
+    for pat in cfg.get("exclude_url_patterns") or []:
+        if pat.lower() in url.lower():
+            return f"url contains {pat!r}"
+    if _canon(url) in {_canon(u) for u in cfg.get("exclude_urls") or []}:
+        return "url listed in exclude_urls"
+    return None
+
+
 async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
     cfg = config()["packs"]
     category = category_for(claim.get("domain", ""))
@@ -181,15 +201,8 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
     passages = []
     docs = [d.model_dump(mode="json") if hasattr(d, "model_dump") else dict(d) for d in docs]
     n_returned = len(docs)
-    drop_ch = set(cfg.get("exclude_channels") or [])
-    drop_dom = [x.lower().removeprefix("www.") for x in cfg.get("exclude_domains") or []]
-
-    def _dropped(d: dict) -> bool:
-        dom = (d.get("source_domain") or "").lower().removeprefix("www.")
-        return d.get("channel") in drop_ch or any(dom == x or dom.endswith("." + x) for x in drop_dom)
-
-    removed = [d for d in docs if _dropped(d)]
-    docs = [d for d in docs if not _dropped(d)]
+    removed = [dict(d, excluded_because=exclusion_reason(d)) for d in docs if exclusion_reason(d)]
+    docs = [d for d in docs if not exclusion_reason(d)]
     for i, d in enumerate(docs[: cfg["max_passages"]], 1):
         text = d.get("text") or ""
         kept = text[: cfg["max_chars_per_passage"]]
@@ -219,7 +232,8 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
             **attempted,
             "n_docs_returned": n_returned,
             "excluded_by_config": [{"url": str(d.get("url")), "channel": d.get("channel"),
-                                    "source_domain": d.get("source_domain")} for d in removed],
+                                    "source_domain": d.get("source_domain"),
+                                    "because": d["excluded_because"]} for d in removed],
             "n_docs_kept": len(passages),
             "docs_per_channel": dict(Counter(p["channel"] for p in passages)),
             "search_concepts": concepts,
@@ -331,6 +345,83 @@ def summary() -> int:
     return 0
 
 
+_SUSPECT = re.compile(
+    r"fact[\s-]?check\w*|snopes|politifact|full\s?fact|\bdebunk\w*|\bhoax\b|pants on fire|"
+    r"\b(?:rated|rating)\b[^.]{0,40}\b(?:true|false|unproven|mixture|misleading)\b|"
+    r"\b(?:mostly|half)[\s-](?:true|false)\b", re.I)
+
+
+def _suspect(p: dict) -> tuple[str, str]:
+    """(where:term, context) for the first fact-check-like mention, else ("", "")."""
+    m = _SUSPECT.search(p.get("url") or "")
+    if m:
+        return f"url:{m.group(0).lower()}", p["url"]
+    m = _SUSPECT.search(p.get("text") or "")
+    if m:
+        t = p["text"]
+        a, b = max(0, m.start() - 120), min(len(t), m.end() + 120)
+        return f"text:{m.group(0).lower()}", ("..." if a else "") + t[a:b].replace("\n", " ") + ("..." if b < len(t) else "")
+    return "", ""
+
+
+def audit() -> int:
+    """One spreadsheet for checking packs by hand: every passage beside its
+    claim, gold label and the fact-checker's notes, with fact-check-like text
+    highlighted, and which passages the CURRENT config would now remove."""
+    import csv as _csv
+
+    claims = load_claims()
+    rows, to_rebuild, n_suspect = [], [], 0
+    for c in claims:
+        fc = c.get("factcheck") or {}
+        base = {"claim_id": c["id"], "gold_label": c["label"],
+                "factcheck_rating": c.get("factcheck_rating"), "claim": c["claim"],
+                "whats_true": fc.get("whats_true", ""), "whats_false": fc.get("whats_false", ""),
+                "whats_unknown": fc.get("whats_unknown", "")}
+        try:
+            pk = load_pack(c["id"])
+        except PackError as exc:
+            rows.append({**base, "pid": "", "note_from_tool": f"NO PACK: {exc}"})
+            continue
+        if not pk["passages"]:
+            rows.append({**base, "pid": "", "note_from_tool": "EMPTY PACK"})
+        rebuild = False
+        for ps in pk["passages"]:
+            term, ctx = _suspect(ps)
+            n_suspect += bool(term)
+            now = exclusion_reason(ps)
+            rebuild |= bool(now)
+            rows.append({**base, "pid": ps["pid"], "url": ps["url"],
+                         "source_domain": ps.get("source_domain"),
+                         "published_date": ps.get("published_date"), "channel": ps["channel"],
+                         "suspect": term, "suspect_context": ctx,
+                         "removed_by_current_config": now or "",
+                         "passage_text": ps["text"], "keep_passage": "", "label_ok": "", "notes": ""})
+        if rebuild:
+            to_rebuild.append(c["id"])
+    out = path("results") / "pack_audit.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fields = list(dict.fromkeys(k for r in rows for k in r))
+    # utf-8-sig: Excel on Windows shows curly quotes and accents correctly.
+    with out.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = _csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    print(f"{len(claims)} claims, {sum(1 for r in rows if r.get('pid'))} passages -> {out}")
+    print(f"{n_suspect} passages mention fact-checking or a rating (column `suspect`). Read each: "
+          f"a verdict from any source is an answer key. Put the URL of any you remove in "
+          f"packs.exclude_urls, with a note why.")
+    if to_rebuild:
+        print(f"\n{len(to_rebuild)} packs contain a passage the CURRENT config removes "
+              f"(column `removed_by_current_config`): {', '.join(to_rebuild)}")
+        print("Rebuild only those (PowerShell):")
+        print("  " + "; ".join(f"Remove-Item -Force study\\packs\\{cid}.json" for cid in to_rebuild))
+        print(f"  python -m study.packs build --rebuild {','.join(to_rebuild)}")
+    else:
+        print("\nNo pack contains a passage the current config would remove.")
+    return 0
+
+
 def verify() -> int:
     bad = 0
     latest = {}
@@ -349,9 +440,19 @@ def verify() -> int:
 
 async def build_all(only: set[str] | None, rebuild: str | None,
                     retriever: Retriever | None = None) -> None:
+    """`rebuild` is one claim id or a comma-separated list. Each pack must be
+    deleted by hand first: a rebuild changes the evidence, so it is never
+    done implicitly."""
     claims = load_claims()
     if rebuild:
-        only = {rebuild}
+        only = {x.strip() for x in rebuild.split(",") if x.strip()}
+        unknown = only - {c["id"] for c in claims}
+        if unknown:
+            raise PackError(f"--rebuild: unknown claim ids {sorted(unknown)}")
+        still = [cid for cid in sorted(only) if pack_path(cid).exists()]
+        if still:
+            raise PackError(f"--rebuild: delete these packs first: "
+                            + ", ".join(str(pack_path(c)) for c in still))
     todo = [c for c in claims if (not only or c["id"] in only)]
     flagged, failed = [], []
     for c in todo:
@@ -394,14 +495,18 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build")
     b.add_argument("--only", default="", help="comma-separated claim ids")
-    b.add_argument("--rebuild", default=None, metavar="CLAIM_ID")
+    b.add_argument("--rebuild", default=None, metavar="CLAIM_IDS",
+                   help="comma-separated claim ids whose pack files you deleted")
     sub.add_parser("verify")
     sub.add_parser("summary", help="pack sizes per gold label, channels, domains, flags")
+    sub.add_parser("audit", help="spreadsheet of every passage for checking by hand")
     args = ap.parse_args()
     if args.cmd == "verify":
         raise SystemExit(1 if verify() else 0)
     if args.cmd == "summary":
         raise SystemExit(summary())
+    if args.cmd == "audit":
+        raise SystemExit(audit())
     only = {x for x in args.only.split(",") if x} or None
     try:
         asyncio.run(build_all(only, args.rebuild))

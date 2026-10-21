@@ -23,6 +23,9 @@ python -m study.claimsets check          # rating -> label mapping, exclusions
 python -m study.packs build              # retrieve once, freeze, hash
 python -m study.packs verify
 python -m study.packs summary            # pack sizes per gold label, channels, domains
+python -m study.packs audit              # spreadsheet: every passage beside claim + gold label
+#    remove pages by hand via packs.exclude_urls; rebuild only affected packs:
+#    python -m study.packs build --rebuild id1,id2   (after deleting those pack files)
 #    audit gold labels against the frozen packs before going further
 python -m study.probe closed-book        # what each model knows unaided
 python -m study.probe leak-check         # is anything retrieving server-side?
@@ -72,7 +75,10 @@ python -m pytest study/tests -q
   freezing. Because FactShield fetches only 3 results per channel, excluded
   sites could use up every slot; `packs.fetch_per_channel` makes the study
   call the same app.retrieval channels with a larger limit and exclude after
-  fetching (null restores the product's retrieve()). One claim per source makes the source and claim intercepts the
+  fetching (null restores the product's retrieve()). URL patterns catch
+  fact-check desks on news sites (`exclude_url_patterns`); pages judged by hand
+  go in `exclude_urls`. The config loader refuses a repeated key, because YAML
+  would otherwise keep the last one silently. One claim per source makes the source and claim intercepts the
   same, so the mixed model keeps one.
 - **Mixed-model fit.** statsmodels' binomial mixed model is Bayesian. Its
   variational fit under-covered badly on synthetic data (69–76% for nominal

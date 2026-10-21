@@ -80,7 +80,8 @@ claims:
       - missing context
     # File name -> set, e.g. {"snopes_2024.csv": A, "snopes_2026.csv": B}.
     # Unlisted files use a `set` column if there is one, else the file name.
-    set_by_file: {}
+    set_by_file:
+      "claims - Dataset A.csv": A
     # With no `domain` column, every claim gets this (a key of
     # packs.domain_to_category). `general` searches the web without a
     # subject-specific source pack.
@@ -172,8 +173,6 @@ packs:
   # copying, not checking. Packs record this as a warning either way; listing
   # a channel or domain here removes those documents BEFORE freezing.
   # Decide before building: changing it later means rebuilding every pack.
-  exclude_channels: [prior_check]
-  exclude_domains: [snopes.com, politifact.com, fullfact.org]            # e.g. [snopes.com, politifact.com]
   # How many results to ask each search channel for. FactShield's own
   # retrieve() asks for 3 (backend/config/models.yaml). With fact-check
   # sites excluded, those 3 were often all fact-checks, leaving packs empty
@@ -182,8 +181,18 @@ packs:
   # removes exclusions AFTER fetching, so excluded sites cannot use up slots.
   # null = call app.retrieval.retrieve() exactly as the product does.
   fetch_per_channel: 8
-  exclude_channels: []             # e.g. [prior_check]
-  exclude_domains: []              # e.g. [snopes.com, politifact.com]
+  # Decided before any model run (claims_Dataset_A): the claims and their
+  # gold labels come from Snopes, so fact-checking organisations and
+  # published ratings are kept out of every pack.
+  exclude_channels: [prior_check]
+  exclude_domains: [snopes.com, politifact.com, fullfact.org]
+  # Case-insensitive substrings of a URL. Catches fact-check desks on news
+  # sites (reuters.com/.../fact-check-..., apnews.com/article/archive-fact-
+  # checking-...) and stories whose URL names a fact-checker's verdict.
+  exclude_url_patterns: [fact-check, factcheck, fact-checking, snopes, politifact, fullfact]
+  # Individual pages removed after reading them in `python -m study.packs
+  # audit`. Exact URLs. Each one is a judgement: note why next to it.
+  exclude_urls: []
   # Study claims carry a `domain`; FactShield's retrieval wants a `category`.
   # In the product, triage chooses the category with an LLM. The study must
   # not call triage, so the mapping is fixed here and published.

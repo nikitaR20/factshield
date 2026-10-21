@@ -178,3 +178,70 @@ def test_summary(study_paths, fake_retriever, capsys):
     out = capsys.readouterr().out
     assert "refuted                     1     0     0      1        0" in out
     assert "empty packs: t002" in out
+
+
+def test_duplicate_config_key_is_refused(tmp_path):
+    from study.common import config as cfg_fn
+    f = tmp_path / "c.yaml"
+    f.write_text("packs:\n  exclude_channels: [prior_check]\n  exclude_channels: []\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="appears twice"):
+        cfg_fn(str(f))
+
+
+def test_committed_config_has_the_exclusions():
+    p = packs.config()["packs"]
+    assert p["exclude_channels"] == ["prior_check"]
+    assert "snopes.com" in p["exclude_domains"] and "fact-check" in p["exclude_url_patterns"]
+
+
+def test_url_pattern_and_listed_url_exclusion(study_paths, monkeypatch):
+    monkeypatch.setitem(packs.config()["packs"], "exclude_urls", ["https://www.bbc.com/judged-out/"])
+
+    async def docs(*a, **k):
+        return [{"url": "https://www.reuters.com/article/world/fact-check-guard-idUS1", "title": "t",
+                 "text": "x", "channel": "authority", "source_domain": "reuters.com"},
+                {"url": "https://apnews.com/article/archive-fact-checking-8336120181", "title": "t",
+                 "text": "x", "channel": "authority", "source_domain": "apnews.com"},
+                {"url": "http://bbc.com/judged-out", "title": "t", "text": "x",
+                 "channel": "open_web", "source_domain": "bbc.com"},
+                {"url": "https://bbc.com/news/keep", "title": "t", "text": "x",
+                 "channel": "open_web", "source_domain": "bbc.com"}]
+
+    asyncio.run(packs.build_all({"t001"}, None, docs))
+    p = packs.load_pack("t001")
+    assert [x["url"] for x in p["passages"]] == ["https://bbc.com/news/keep"]
+    why = [e["because"] for e in p["retrieval"]["excluded_by_config"]]
+    assert why == ["url contains 'fact-check'", "url contains 'fact-check'", "url listed in exclude_urls"]
+
+
+def test_audit_sheet_and_targeted_rebuild(study_paths, monkeypatch, capsys):
+    import csv
+    for k in ("exclude_url_patterns", "exclude_urls"):
+        monkeypatch.setitem(packs.config()["packs"], k, [])
+
+    async def docs(claim, *a, **k):
+        return [{"url": "https://reuters.com/article/fact-check-x", "title": "t",
+                 "text": "Reuters Fact Check rated this claim false.", "channel": "authority",
+                 "source_domain": "reuters.com"},
+                {"url": "https://bbc.com/news/y", "title": "t", "text": "Plain news.",
+                 "channel": "open_web", "source_domain": "bbc.com"}]
+
+    asyncio.run(packs.build_all(None, None, docs))
+    monkeypatch.setitem(packs.config()["packs"], "exclude_url_patterns", ["fact-check"])
+    assert packs.audit() == 0
+    out = capsys.readouterr().out
+    assert "--rebuild t001,t002,t003" in out
+    with (packs.path("results") / "pack_audit.csv").open(encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
+    first = rows[0]
+    assert first["suspect"] == "url:fact-check" and first["removed_by_current_config"] == "url contains 'fact-check'"
+    assert rows[1]["suspect"] == "" and rows[1]["removed_by_current_config"] == ""
+    assert {"claim", "gold_label", "passage_text", "keep_passage", "label_ok"} <= set(first)
+
+    with pytest.raises(packs.PackError, match="delete these packs first"):
+        asyncio.run(packs.build_all(None, "t001,t002", docs))
+    packs.pack_path("t001").unlink()
+    packs.pack_path("t002").unlink()
+    asyncio.run(packs.build_all(None, "t001,t002", docs))
+    assert [x["url"] for x in packs.load_pack("t001")["passages"]] == ["https://bbc.com/news/y"]
+    assert packs._manifest_rows("t002")[-1]["rebuild"] is True
