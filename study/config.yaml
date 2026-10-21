@@ -172,6 +172,14 @@ packs:
   # copying, not checking. Packs record this as a warning either way; listing
   # a channel or domain here removes those documents BEFORE freezing.
   # Decide before building: changing it later means rebuilding every pack.
+  # How many results to ask each search channel for. FactShield's own
+  # retrieve() asks for 3 (backend/config/models.yaml). With fact-check
+  # sites excluded, those 3 were often all fact-checks, leaving packs empty
+  # (4 of 7 refuted claims in claims_Dataset_A). With a number here, the study
+  # calls the same app.retrieval channel functions itself with this limit and
+  # removes exclusions AFTER fetching, so excluded sites cannot use up slots.
+  # null = call app.retrieval.retrieve() exactly as the product does.
+  fetch_per_channel: 8
   exclude_channels: []             # e.g. [prior_check]
   exclude_domains: []              # e.g. [snopes.com, politifact.com]
   # Study claims carry a `domain`; FactShield's retrieval wants a `category`.

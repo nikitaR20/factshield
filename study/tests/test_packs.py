@@ -100,3 +100,81 @@ def test_truncated_key_findings_warned_not_excluded(study_paths, monkeypatch):
     p = packs.load_pack("t001")
     assert [x["key_findings_in_text"] for x in p["passages"]] == [False, True]
     assert p["warnings"] == ["key_findings_truncated:P1"] and p["flags"] == []
+
+
+def _doc(url, channel, domain):
+    from app.schemas import RawDocument
+    return RawDocument(url=url, title="t", text="x", source_domain=domain, channel=channel)
+
+
+def test_study_fanout_limit_skip_and_record(study_paths, monkeypatch):
+    from app import retrieval as R
+    calls = {}
+
+    async def fake_factcheck(claim, limit=5, **k):
+        calls["factcheck"] = limit
+        return [_doc("https://snopes.com/a", "prior_check", "snopes.com")]
+
+    async def fake_domain(claim, limit=5, **k):
+        calls["domain_search"] = limit
+        return [_doc("https://www.snopes.com/fact-check/a", "authority", "snopes.com"),
+                _doc("https://reuters.com/x", "authority", "reuters.com"),
+                _doc("https://facebook.com/p", "authority", "facebook.com")]
+
+    async def fake_web(claim, limit=5, **k):
+        calls["open_web"] = limit
+        return [_doc("http://reuters.com/x/", "open_web", "reuters.com"),   # duplicate
+                _doc("https://bbc.com/y", "open_web", "bbc.com")]
+
+    monkeypatch.setitem(R.ADAPTERS, "factcheck", fake_factcheck)
+    monkeypatch.setattr(R, "domain_search", fake_domain)
+    monkeypatch.setattr(R, "open_web", fake_web)
+    monkeypatch.setitem(packs.config()["packs"], "fetch_per_channel", 8)
+    monkeypatch.setitem(packs.config()["packs"], "exclude_channels", ["prior_check"])
+    monkeypatch.setitem(packs.config()["packs"], "exclude_domains", ["snopes.com"])
+
+    asyncio.run(packs.build_all({"t001"}, None))
+    p = packs.load_pack("t001")
+    assert calls == {"domain_search": 8, "open_web": 8}            # factcheck never called
+    assert [x["url"] for x in p["passages"]] == ["https://reuters.com/x", "https://bbc.com/y"]
+    f = p["retrieval"]["fanout"]
+    assert f["mode"] == "study_fanout" and f["returned_per_channel"] == {"domain_search": 3, "open_web": 2}
+    assert p["retrieval"]["excluded_by_config"][0]["source_domain"] == "snopes.com"
+
+
+def test_fanout_null_uses_product_retrieve(study_paths, monkeypatch):
+    from app import retrieval as R
+    seen = {}
+
+    async def fake_retrieve(claim, category, jurisdiction=None, concepts=None):
+        seen["called"] = True
+        return []
+
+    monkeypatch.setattr(R, "retrieve", fake_retrieve)
+    monkeypatch.setitem(packs.config()["packs"], "fetch_per_channel", None)
+    asyncio.run(packs.build_all({"t001"}, None))
+    assert seen and packs.load_pack("t001")["retrieval"]["fanout"]["mode"] == "app.retrieval.retrieve"
+
+
+def test_one_failing_claim_does_not_stop_build(study_paths, fake_retriever, capsys):
+    async def flaky(claim, *a, **k):
+        if "9 percent" in claim:
+            raise RuntimeError("search timed out")
+        return await fake_retriever(claim, *a, **k)
+
+    asyncio.run(packs.build_all(None, None, flaky))
+    assert packs.pack_path("t001").exists() and packs.pack_path("t003").exists()
+    assert not packs.pack_path("t002").exists()
+    assert "1 claims FAILED" in capsys.readouterr().out
+    asyncio.run(packs.build_all(None, None, fake_retriever))          # retry fills the gap
+    assert packs.pack_path("t002").exists()
+
+
+def test_summary(study_paths, fake_retriever, capsys):
+    async def none_for_refuted(claim, *a, **k):
+        return [] if "9 percent" in claim else await fake_retriever(claim, *a, **k)
+    asyncio.run(packs.build_all(None, None, none_for_refuted))
+    assert packs.summary() == 0
+    out = capsys.readouterr().out
+    assert "refuted                     1     0     0      1        0" in out
+    assert "empty packs: t002" in out

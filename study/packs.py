@@ -100,10 +100,74 @@ def _flags(claim: dict, passages: list[dict], attempted: dict) -> list[str]:
     return flags
 
 
+_LAST_FANOUT: dict = {}
+
+
+def _canon(url: str) -> str:
+    from urllib.parse import urlparse
+    u = urlparse(str(url))
+    return f"{u.netloc.lower().removeprefix('www.')}{u.path.rstrip('/')}"
+
+
 async def _default_retriever(claim: str, category: str, jurisdiction: str | None,
                              concepts: list[list[str]] | None = None) -> list:
-    from app.retrieval import retrieve
-    return await retrieve(claim, category, jurisdiction, concepts=concepts)
+    """Retrieve through app.retrieval.
+
+    fetch_per_channel null: `retrieve()` unchanged, as the product calls it.
+    Otherwise: the same channels `retrieve()` uses (the category's adapters,
+    domain_search, open_web if the category enables it), each asked for
+    `fetch_per_channel` results. A channel listed in exclude_channels is not
+    called at all. Deny-listed domains and duplicate URLs are removed exactly
+    as retrieve() does. What each channel returned or raised is recorded,
+    because retrieve() swallows failures and an empty pack needs a reason.
+    """
+    import asyncio
+
+    from app import retrieval as R
+
+    cfg = config()["packs"]
+    n = cfg.get("fetch_per_channel")
+    _LAST_FANOUT.clear()
+    if not n:
+        _LAST_FANOUT.update({"mode": "app.retrieval.retrieve"})
+        return await R.retrieve(claim, category, jurisdiction, concepts=concepts)
+
+    skip = set(cfg.get("exclude_channels") or [])
+    pk = pack_for(category, jurisdiction)
+    calls: dict[str, object] = {}
+    for name in pk.get("adapters", ["factcheck"]):
+        fn = R.ADAPTERS.get(name)
+        # The factcheck adapter IS the prior_check channel.
+        if fn is None or (name == "factcheck" and "prior_check" in skip):
+            continue
+        calls[name] = fn(claim, limit=n, category=category, jurisdiction=jurisdiction,
+                         concepts=concepts)
+    if "authority" not in skip:
+        calls["domain_search"] = R.domain_search(claim, n, category=category,
+                                                 jurisdiction=jurisdiction)
+    if pk.get("use_open_web", True) and "open_web" not in skip:
+        calls["open_web"] = R.open_web(claim, n)
+
+    results = await asyncio.gather(*calls.values(), return_exceptions=True)
+    docs, seen, per = [], set(), {}
+    for name, res in zip(calls, results):
+        if isinstance(res, Exception):
+            per[name] = f"error: {type(res).__name__}: {res}"[:200]
+            continue
+        per[name] = len(res)
+        for d in res:
+            if R.DENY_DOMAINS and any(
+                    d.source_domain.lower().removeprefix("www.") == x
+                    or d.source_domain.lower().endswith("." + x) for x in R.DENY_DOMAINS):
+                continue
+            key = _canon(d.url)
+            if key in seen:
+                continue
+            seen.add(key)
+            docs.append(d)
+    _LAST_FANOUT.update({"mode": "study_fanout", "fetch_per_channel": n,
+                         "channels_called": list(calls), "returned_per_channel": per})
+    return docs
 
 
 async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
@@ -159,6 +223,7 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
             "n_docs_kept": len(passages),
             "docs_per_channel": dict(Counter(p["channel"] for p in passages)),
             "search_concepts": concepts,
+            "fanout": dict(_LAST_FANOUT) if retriever is None else {"mode": "injected"},
         },
         # Per-provider retrievability of the claim's SOURCE, as recorded in the
         # claim set. The pack cannot measure this itself: it would need each
@@ -224,6 +289,48 @@ def load_pack(claim_id: str) -> dict:
     return pack
 
 
+def summary() -> int:
+    """Per-label pack sizes, channels, top domains, flags and warnings."""
+    from collections import defaultdict
+
+    claims = load_claims()
+    by_label = defaultdict(Counter)
+    channels, domains, flags, warns = Counter(), Counter(), Counter(), Counter()
+    empty_ids = []
+    for c in claims:
+        try:
+            pk = load_pack(c["id"])
+        except PackError:
+            by_label[c["label"]]["missing"] += 1
+            continue
+        n = len(pk["passages"])
+        by_label[c["label"]]["empty" if n == 0 else "one" if n == 1 else "2+"] += 1
+        if n == 0:
+            empty_ids.append(c["id"])
+        for ps in pk["passages"]:
+            channels[ps["channel"]] += 1
+            domains[(ps["source_domain"] or "").removeprefix("www.")] += 1
+        flags.update(pk["flags"])
+        warns.update(w.split(":")[0] for w in pk.get("warnings", []))
+    print(f"{len(claims)} claims")
+    print(f"\n{'gold label':<22}{'claims':>7}{'2+':>6}{'one':>6}{'empty':>7}{'missing':>9}")
+    for lab in ("supported", "refuted", "not_enough_evidence"):
+        v = by_label.get(lab, Counter())
+        print(f"{lab:<22}{sum(v.values()):>7}{v['2+']:>6}{v['one']:>6}{v['empty']:>7}{v['missing']:>9}")
+    print(f"\npassages per channel: {dict(channels)}")
+    print("top domains: " + ", ".join(f"{d} {k}" for d, k in domains.most_common(12)))
+    if flags:
+        print(f"flags (claim excluded from runs): {dict(flags)}")
+    if warns:
+        print(f"warnings (kept): {dict(warns)}")
+    if empty_ids:
+        print(f"empty packs: {', '.join(empty_ids)}")
+    missing = sum(v["missing"] for v in by_label.values())
+    if missing:
+        print(f"\n{missing} packs missing: run `python -m study.packs build` to finish.")
+    return 0
+
+
 def verify() -> int:
     bad = 0
     latest = {}
@@ -246,13 +353,19 @@ async def build_all(only: set[str] | None, rebuild: str | None,
     if rebuild:
         only = {rebuild}
     todo = [c for c in claims if (not only or c["id"] in only)]
-    flagged = []
+    flagged, failed = [], []
     for c in todo:
         if pack_path(c["id"]).exists():
             if rebuild:
                 raise PackError(f"--rebuild {rebuild}: delete {pack_path(c['id'])} first.")
             continue
-        pack = await build_pack(c, retriever)
+        try:
+            pack = await build_pack(c, retriever)
+        except Exception as exc:  # one bad claim must not stop the build
+            failed.append((c["id"], f"{type(exc).__name__}: {exc}"))
+            print(f"  {c['id']}: FAILED {type(exc).__name__}: {str(exc)[:200]} (no pack written; "
+                  f"re-run to retry)")
+            continue
         write_pack(pack, rebuild=bool(rebuild))
         print(f"  {c['id']}: {len(pack['passages'])} passages "
               f"{pack['retrieval']['docs_per_channel']} flags={pack['flags']}"
@@ -266,6 +379,10 @@ async def build_all(only: set[str] | None, rebuild: str | None,
         print(f"\n{len(with_verdict)} packs contain a published fact-check rating "
               f"(warning, not excluded). If these claims come from a fact-check table, the "
               f"pack may hold their answer. See packs.exclude_channels in config.yaml.")
+    if failed:
+        print(f"\n{len(failed)} claims FAILED and have no pack yet. Re-run the same command to retry:")
+        for cid, why in failed:
+            print(f"  {cid}: {why[:200]}")
     if flagged:
         print(f"\n{len(flagged)} FLAGGED claims (excluded from runs unless --include-flagged):")
         for cid, fl in flagged:
@@ -279,9 +396,12 @@ def main() -> None:
     b.add_argument("--only", default="", help="comma-separated claim ids")
     b.add_argument("--rebuild", default=None, metavar="CLAIM_ID")
     sub.add_parser("verify")
+    sub.add_parser("summary", help="pack sizes per gold label, channels, domains, flags")
     args = ap.parse_args()
     if args.cmd == "verify":
         raise SystemExit(1 if verify() else 0)
+    if args.cmd == "summary":
+        raise SystemExit(summary())
     only = {x for x in args.only.split(",") if x} or None
     try:
         asyncio.run(build_all(only, args.rebuild))
