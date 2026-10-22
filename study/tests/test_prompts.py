@@ -39,7 +39,7 @@ def test_empty_pack_renders_none():
 
 
 @pytest.mark.parametrize("text,cond,expected,rule", [
-    ("Supported. The passage says so.", "free", "supported", "first_line"),
+    ("Supported. The passage says so.", "free", "supported", "first_sentence"),
     ("**Refuted**\nBecause P1 says otherwise.", "free", "refuted", "first_line"),
     ("Not enough evidence.\nNothing in the pack.", "free", "not_enough_evidence", "first_line"),
     ("Verdict: refuted\nexplanation", "free", "refuted", "verdict_line"),
@@ -48,7 +48,7 @@ def test_empty_pack_renders_none():
     ("Supported or refuted? Hard to say.", "free", "unparseable", "first_line_no_single_label"),
     ("Let me look.\nSupported.", "free", "unparseable", "first_line_no_single_label"),
     ("Verdict: supported\nVerdict: refuted", "free", "unparseable", "verdict_line_ambiguous"),
-    ("Refuted [P1]. The passage gives a different figure [P2].", "citation", "refuted", "first_line"),
+    ("Refuted [P1]. The passage gives a different figure [P2].", "citation", "refuted", "first_sentence"),
     ("Reasoning: x\nVerdict: Refuted\nConfidence: high", "format", "refuted", "verdict_line"),
     ("Reasoning: x\nThe answer is refuted.\nConfidence: high", "format", "unparseable", "format_missing_verdict_line"),
     ("", "free", "unparseable", "empty"),
@@ -57,6 +57,13 @@ def test_empty_pack_renders_none():
      "not_enough_evidence", "verdict_line"),
     ("Long reasoning.\n**Verdict:** Refuted", "free", "refuted", "verdict_line"),
     ("## Verdict - Supported\nbecause", "free", "supported", "verdict_line"),
+    # Pilot 2026-10-22, 0001 citation: verdict in the first sentence of a one-paragraph answer
+    ("The claim is refuted. The sources describe Christmas boxes given to servants [P1][P2]. "
+     "Therefore, the claim is not supported by the evidence.", "citation", "refuted", "first_sentence"),
+    # a first sentence with no label falls back to the whole line, as before
+    ("Looking at the sources. Supported, according to P1.", "free", "supported", "first_line"),
+    # a hedged first sentence is still not a verdict
+    ("The claim is partly supported. The rest is not.", "free", "unparseable", "first_line_no_single_label"),
     # "verdict:" mid-sentence is not a Verdict field (rule is first_line, not verdict_line)
     ("Text mentioning the verdict: supported, but not as a field", "free", "supported", "first_line"),
     (None, "free", "unparseable", "empty"),

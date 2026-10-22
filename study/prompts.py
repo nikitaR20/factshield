@@ -84,7 +84,7 @@ _BRACKET_CITE = re.compile(r"\[[^\]]*\]")
 # tolerated; the label word itself must be there. (Pilot, 2026-10-22: a
 # gpt-oss answer ending "**Verdict: not enough evidence**." was unparseable.)
 _FMT = r"[\s*_#>`]*"
-PARSER_VERSION = "parser-v2"
+PARSER_VERSION = "parser-v3"
 _VERDICT_LINE = re.compile(rf"^{_FMT}verdict{_FMT}[:\-–]\s*(.+?)\s*$", re.I | re.M)
 _CONF_LINE = re.compile(rf"^{_FMT}confidence{_FMT}[:\-–]\s*(.+?)\s*$", re.I | re.M)
 _REASON_LINE = re.compile(rf"^{_FMT}reasoning{_FMT}[:\-–]", re.I | re.M)
@@ -151,10 +151,16 @@ def parse(text: str | None, condition: str) -> dict:
         out["parse_rule"] = "format_missing_verdict_line"
     else:
         first = next((ln for ln in text.splitlines() if ln.strip()), "")
-        lab = label_in(first)
+        # The opening statement decides. Check the first SENTENCE before the
+        # whole first line: a one-paragraph answer ("The claim is refuted. ...
+        # the claim is not supported by the evidence.") otherwise mixes the
+        # verdict with later wording. (Pilot, 2026-10-22, 0001 citation.)
+        sentence = re.split(r"(?<=[.!?])\s+", first.strip(), maxsplit=1)[0]
+        lab_s = label_in(sentence) if sentence != first.strip() else None
+        lab = lab_s or label_in(first)
         if lab:
             out["parsed_verdict"] = lab
-            out["parse_rule"] = "first_line"
+            out["parse_rule"] = "first_sentence" if lab_s else "first_line"
         else:
             out["parse_rule"] = "first_line_no_single_label"
 
