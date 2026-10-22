@@ -26,7 +26,7 @@ import re
 
 from .common import config
 
-VERSION = "passages-v2"
+VERSION = "passages-v3"
 
 _STOP = set("""
 a an the of to in on for and or but nor is are was were be been being that this these those
@@ -82,8 +82,9 @@ def _is_boilerplate(line: str) -> bool:
     # Strings of glued-together menu items ("MoviesFashionTelevision...").
     if re.search(r"(?:[a-z][A-Z][a-z]+){3,}", s) and not re.search(r"[.!?]", s):
         return True
-    # "Most read" lists flattened onto one line: "1. Headline 4 MIN READ 669 2. ..."
-    if len(re.findall(r"\b\d+\s+MIN READ\b", s, re.I)) >= 2:
+    # "Most read" lists: "1. Headline 4 MIN READ 669", one item per line or all
+    # on one line. Article prose never contains "N MIN READ".
+    if re.search(r"\b\d+\s+MIN READ\b", s, re.I):
         return True
     # Lines that are mostly links or markup.
     if s.count("](") + s.count("http") >= max(2, len(words) // 4):

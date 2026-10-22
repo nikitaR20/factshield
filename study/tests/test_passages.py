@@ -226,3 +226,13 @@ def test_most_read_list_on_one_line_removed():
             "streets ablaze 5 MIN READ 758")
     cleaned, removed = P.clean(line + "\nTrump urged the Senate to consider his pick without delay.")
     assert "MIN READ" not in cleaned and removed == 1
+
+
+def test_most_read_items_on_separate_lines_removed():
+    """0008 again: in the raw page each 'Most read' item is its own line."""
+    page = ("1. Alberta voters overwhelmingly reject separation process in a victory for Carney 4 MIN READ 669\n"
+            "2. Trump and Vance announce $25M whistleblower program to encourage public to report "
+            "alleged fraud 2 MIN READ 1172\n"
+            "Trump urged the Senate to consider his pick for the high court without delay.")
+    cleaned, removed = P.clean(page)
+    assert "MIN READ" not in cleaned and removed == 2 and "without delay" in cleaned
