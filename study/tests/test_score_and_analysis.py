@@ -123,3 +123,11 @@ def test_real_data_analysis_is_locked(monkeypatch):
     monkeypatch.setattr("sys.argv", ["analyse"])
     with pytest.raises(SystemExit, match="locked"):
         analyse.main()
+
+
+def test_scoring_reparses_saved_text_with_current_parser():
+    row = dict(_row("c", "citation", "unparseable"),
+               response_text="Nothing in the pack says so [P1].\n\n**Verdict: not enough evidence**.")
+    s = score.score_rows([row], CLAIMS, PACKS)[0]
+    assert s["pred"] == "not_enough_evidence" and s["correct"] == 1
+    assert s["parse_rule"] == "verdict_line" and s["parser_version"]

@@ -79,9 +79,15 @@ def build(condition: str, claim: str, pack: dict | None) -> tuple[str, str, dict
 
 _MD = re.compile(r"[*_`#>]")
 _BRACKET_CITE = re.compile(r"\[[^\]]*\]")
-_VERDICT_LINE = re.compile(r"^\s*verdict\s*[:\-–]\s*(.+?)\s*$", re.I | re.M)
-_CONF_LINE = re.compile(r"^\s*confidence\s*[:\-–]\s*(.+?)\s*$", re.I | re.M)
-_REASON_LINE = re.compile(r"^\s*reasoning\s*[:\-–]", re.I | re.M)
+# Field labels may be wrapped in markdown: "**Verdict:** x", "**Verdict: x**",
+# "## Verdict - x", "> Verdict: x". Only the formatting around the label is
+# tolerated; the label word itself must be there. (Pilot, 2026-10-22: a
+# gpt-oss answer ending "**Verdict: not enough evidence**." was unparseable.)
+_FMT = r"[\s*_#>`]*"
+PARSER_VERSION = "parser-v2"
+_VERDICT_LINE = re.compile(rf"^{_FMT}verdict{_FMT}[:\-–]\s*(.+?)\s*$", re.I | re.M)
+_CONF_LINE = re.compile(rf"^{_FMT}confidence{_FMT}[:\-–]\s*(.+?)\s*$", re.I | re.M)
+_REASON_LINE = re.compile(rf"^{_FMT}reasoning{_FMT}[:\-–]", re.I | re.M)
 _NEI = re.compile(r"\bnot\s+enough\s+evidence\b")
 _LABEL = re.compile(r"\b(supported|refuted)\b")
 # A label word with a qualifier in front is a different claim ("not supported",

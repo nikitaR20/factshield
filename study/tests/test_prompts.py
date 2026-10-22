@@ -52,6 +52,13 @@ def test_empty_pack_renders_none():
     ("Reasoning: x\nVerdict: Refuted\nConfidence: high", "format", "refuted", "verdict_line"),
     ("Reasoning: x\nThe answer is refuted.\nConfidence: high", "format", "unparseable", "format_missing_verdict_line"),
     ("", "free", "unparseable", "empty"),
+    # Pilot 2026-10-22, gpt-oss: verdict line wrapped in bold, at the end
+    ("The sources do not say this [P1][P3].\n\n**Verdict: not enough evidence**.", "citation",
+     "not_enough_evidence", "verdict_line"),
+    ("Long reasoning.\n**Verdict:** Refuted", "free", "refuted", "verdict_line"),
+    ("## Verdict - Supported\nbecause", "free", "supported", "verdict_line"),
+    # "verdict:" mid-sentence is not a Verdict field (rule is first_line, not verdict_line)
+    ("Text mentioning the verdict: supported, but not as a field", "free", "supported", "first_line"),
     (None, "free", "unparseable", "empty"),
 ])
 def test_parser(text, cond, expected, rule):
@@ -84,3 +91,8 @@ def test_citations_extracted_and_units_split():
 def test_prompt_files_are_pinned_not_latest(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError):
         prompts.load("free", "v999")
+
+
+def test_bold_format_fields():
+    out = prompts.parse("**Reasoning:** r\n**Verdict:** supported\n**Confidence:** High", "format")
+    assert out["parsed_verdict"] == "supported" and out["confidence"] == "high" and out["format_ok"] is True

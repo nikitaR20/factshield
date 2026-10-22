@@ -70,9 +70,18 @@ def _knew_unaided() -> dict:
 def score_rows(rows: list[dict], claims: dict, packs: dict) -> list[dict]:
     knew = _knew_unaided()
     out = []
+    from .prompts import PARSER_VERSION, parse
     for r in rows:
         c = claims[r["claim_id"]]
         pk = packs.get(r["claim_id"])
+        # Re-read every saved answer with the CURRENT parser, so a parser fix
+        # made during the pilot applies to rows collected before it. The
+        # verdict stored at run time is kept in the response file untouched.
+        if r.get("response_text") is not None:
+            p = parse(r["response_text"], r["condition"])
+            r = {**r, "parsed_verdict": p["parsed_verdict"], "confidence": p["confidence"],
+                 "format_ok": p["format_ok"], "cited_ids": p["cited_ids"], "cited_urls": p["cited_urls"],
+                 "parse_rule": p["parse_rule"]}
         gold, pred = c["label"], r["parsed_verdict"]
         pids = {p["pid"] for p in pk["passages"]} if pk else set()
         purls = {canon_url(p["url"]) for p in pk["passages"]} if pk else set()
@@ -108,6 +117,9 @@ def score_rows(rows: list[dict], claims: dict, packs: dict) -> list[dict]:
             "n_urls_outside_pack": sum(canon_url(u) not in purls for u in urls),
             "tool_calls_observed": int(bool(r.get("tool_calls"))),
             "pack_hash": r.get("pack_hash"),
+            "parse_rule": r.get("parse_rule"),
+            "parser_version": PARSER_VERSION,
+            "label_original": c.get("label_original"),
             **provenance(),
         })
     return out
