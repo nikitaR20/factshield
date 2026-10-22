@@ -284,6 +284,18 @@ def check(folder: Path) -> int:
     if unknown:
         print("\nRatings not in the table (add each to rating_to_label or excluded_ratings "
               "in study/config.yaml):\n  " + "\n  ".join(repr(u) for u in unknown))
+    ov = config()["claims"]["csv"].get("label_overrides") or {}
+    if ov:
+        from .common import _apply_label_overrides
+        _apply_label_overrides(claims)
+        after = defaultdict(Counter)
+        for c in claims:
+            after[c["set"]][c["label"]] += 1
+        print(f"\nafter {len(ov)} label overrides (claims.csv.label_overrides):")
+        for s_, cnt in sorted(after.items()):
+            print(f"  set {s_}: " + ", ".join(f"{l}={cnt.get(l, 0)}" for l in GOLD_LABELS))
+        for cid, o in ov.items():
+            print(f"  {cid}: -> {o.get('label')}  ({o.get('reason')})")
     domains = Counter(c["domain"] for c in claims)
     print(f"\ndomains: {dict(domains)}")
     if set(domains) == {config()['claims']['csv']['default_domain']}:

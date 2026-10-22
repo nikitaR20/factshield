@@ -88,7 +88,13 @@ claims:
     # override is recorded on the claim. Decide these from the audit, before
     # any model run. Format:
     #   claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on the fatwa"}
-    label_overrides: {}
+    # Decided 2026-10-21 from the Dataset A audit, before any model run.
+    label_overrides:
+      claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on an ISIS fatwa about puppies"}
+      claims_Dataset_A-0004: {label: not_enough_evidence, reason: "pack never mentions any content warning"}
+      claims_Dataset_A-0006: {label: not_enough_evidence, reason: "pack has nothing refuting the 15,000 figure; a DW passage cites an unrelated 15,000"}
+      claims_Dataset_A-0007: {label: not_enough_evidence, reason: "pack shows World Vision had 60 church partners, but not how many churches opened"}
+      claims_Dataset_A-0008: {label: not_enough_evidence, reason: "search returned only fact-checks (excluded) and a petition page; nothing shows texting RBG reaches senators"}
     # With no `domain` column, every claim gets this (a key of
     # packs.domain_to_category). `general` searches the web without a
     # subject-specific source pack.
