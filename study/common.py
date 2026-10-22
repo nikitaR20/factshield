@@ -194,6 +194,25 @@ GOLD_LABELS = ("supported", "refuted", "not_enough_evidence")
 _reported_exclusions = False
 
 
+def _apply_label_overrides(claims: list[dict]) -> None:
+    """Replace a gold label by a pack-relative one, keeping the original."""
+    ov = ((config().get("claims") or {}).get("csv") or {}).get("label_overrides") or {}
+    ids = {c["id"] for c in claims}
+    unknown = set(ov) - ids
+    if unknown and claims:
+        print(f"[study] label_overrides name claims that are not loaded: {sorted(unknown)}",
+              file=sys.stderr)
+    for c in claims:
+        o = ov.get(c["id"])
+        if not o:
+            continue
+        if o.get("label") not in GOLD_LABELS or not o.get("reason"):
+            raise ValueError(f"label_overrides[{c['id']}] needs label in {GOLD_LABELS} and a reason")
+        c["label_original"] = c["label"]
+        c["label"] = o["label"]
+        c["label_override_reason"] = o["reason"]
+
+
 def load_claims(paths: Iterable[Path] | None = None) -> list[dict]:
     """All claims from the claims folder: *.jsonl as-is, *.csv/*.tsv through
     study.claimsets (rows it cannot label are excluded and counted)."""
@@ -226,6 +245,7 @@ def load_claims(paths: Iterable[Path] | None = None) -> list[dict]:
                 raise ValueError(f"duplicate claim id {row['id']}")
             seen.add(row["id"])
             claims.append(row)
+    _apply_label_overrides(claims)
     return claims
 
 

@@ -8,3 +8,5 @@
 !claims/*.jsonl
 !tests/fixtures/*.csv
 !tests/fixtures/*.jsonl
+packs_raw/
+packs_superseded_*/

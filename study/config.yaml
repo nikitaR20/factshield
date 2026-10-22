@@ -82,6 +82,13 @@ claims:
     # Unlisted files use a `set` column if there is one, else the file name.
     set_by_file:
       "claims - Dataset A.csv": A
+    # Gold labels judged against the frozen PACK, where the fact-checker's
+    # rating cannot be reached from the evidence a model is given. The
+    # original rating is kept (factcheck_rating, label_original) and the
+    # override is recorded on the claim. Decide these from the audit, before
+    # any model run. Format:
+    #   claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on the fatwa"}
+    label_overrides: {}
     # With no `domain` column, every claim gets this (a key of
     # packs.domain_to_category). `general` searches the web without a
     # subject-specific source pack.
@@ -185,14 +192,55 @@ packs:
   # gold labels come from Snopes, so fact-checking organisations and
   # published ratings are kept out of every pack.
   exclude_channels: [prior_check]
-  exclude_domains: [snopes.com, politifact.com, fullfact.org]
+  # Fact-checking organisations: their pages carry verdicts. The first three
+  # are in FactShield's own trusted-source list; the rest turn up via open web.
+  exclude_domains: [snopes.com, politifact.com, fullfact.org, factcheck.org, leadstories.com,
+                    checkyourfact.com, truthorfiction.com, hoax-slayer.net, africacheck.org,
+                    factcheck.afp.com, boomlive.in, altnews.in, misbar.com, logicallyfacts.com,
+                    healthfeedback.org, sciencefeedback.co, climatefeedback.org, metafact.io]
   # Case-insensitive substrings of a URL. Catches fact-check desks on news
   # sites (reuters.com/.../fact-check-..., apnews.com/article/archive-fact-
   # checking-...) and stories whose URL names a fact-checker's verdict.
-  exclude_url_patterns: [fact-check, factcheck, fact-checking, snopes, politifact, fullfact]
+  exclude_url_patterns: [fact-check, factcheck, fact-checking, fact-or-fiction, snopes, politifact,
+                         fullfact, /hoax-or-fact, /verify/, /truth-o-meter]
   # Individual pages removed after reading them in `python -m study.packs
   # audit`. Exact URLs. Each one is a judgement: note why next to it.
   exclude_urls: []
+  # How a retrieved page becomes the passage a model sees (study/passages.py).
+  # Applied to every document after the URL/domain exclusions above. Each
+  # removal is recorded in the pack with its reason.
+  processing:
+    enabled: true
+    # Lines shorter than this with no sentence punctuation are treated as
+    # menus, section labels or headline lists and removed.
+    min_words_per_line: 6
+    # After cleaning, keep the sentences most about the claim, each with this
+    # many neighbours, in their original order, up to max_chars_per_passage.
+    context_sentences: 1
+    # Drop a page with almost no article text left after cleaning. Kept low on
+    # purpose: search often returns a short snippet that is real evidence
+    # ("Trump appeared to give Gentiloni the finger"). Menu pages are caught by
+    # the off-topic rule instead.
+    min_chars: 60
+    # Drop a passage that attributes a finding to one of these by name
+    # ("According to Snopes", "PolitiFact rated", "as verified by ...").
+    drop_factcheck_mentions: true
+    factchecker_names: [Snopes, PolitiFact, FactCheck.org, Full Fact, Lead Stories, Check Your Fact,
+                        Truth or Fiction, TruthOrFiction, AFP Fact Check, Reuters Fact Check,
+                        AP Fact Check, USA Today Fact Check, Africa Check, Health Feedback,
+                        Science Feedback, the fact-checkers, fact-checkers, fact checkers]
+    # Drop a passage sharing less than this share of the claim's content words.
+    # Lenient on purpose: word overlap misses paraphrase. At 0.25 it dropped
+    # "noctilucent clouds ... linked to global warming" for a claim about "night
+    # clouds ... human-caused climate change". Noise costs little; a lost
+    # deciding passage can leave a pack unable to settle its claim.
+    min_claim_overlap: 0.15
+    # Drop a passage whose words overlap this much with one already kept.
+    duplicate_jaccard: 0.8
+    # Warnings (claim kept, but review it in the audit):
+    warn_below_passages: 3
+    warn_best_overlap_below: 0.5
+
   # Study claims carry a `domain`; FactShield's retrieval wants a `category`.
   # In the product, triage chooses the category with an LLM. The study must
   # not call triage, so the mapping is fixed here and published.

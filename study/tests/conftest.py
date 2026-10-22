@@ -34,6 +34,11 @@ def study_paths(tmp_path, monkeypatch):
     monkeypatch.setitem(paths, "responses", str(tmp_path / "responses"))
     monkeypatch.setitem(paths, "results", str(tmp_path / "results"))
     monkeypatch.setenv("TAVILY_API_KEY", "fixture")
+    # Tests of other pack features use short dummy texts; the text rules are
+    # tested on their own in test_passages.py.
+    monkeypatch.setitem(config()["packs"], "processing",
+                        {**(config()["packs"].get("processing") or {}), "enabled": False,
+                         "warn_below_passages": 0, "warn_best_overlap_below": 0})
     return tmp_path
 
 
