@@ -38,7 +38,12 @@ from .common import load_claims, path, provenance, read_jsonl, write_meta
 from .packs import PackError, load_pack
 
 VERDICTS = ("supported", "refuted", "not_enough_evidence")
-COMMITTED = ("supported", "refuted")
+# `partly_supported` is a FactShield verdict with no study label. It asserts
+# that some of the claim holds, so it counts as committed — and since it can
+# never equal a gold label it is always wrong. Fixed before any FactShield
+# result was seen; it is the harsh choice for FactShield. Model answers never
+# produce it, so their scores are unaffected.
+COMMITTED = ("supported", "refuted", "partly_supported")
 
 
 def canon_url(u: str) -> str:
