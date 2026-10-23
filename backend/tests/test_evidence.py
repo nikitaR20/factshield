@@ -1058,11 +1058,15 @@ def test_null_result_refutes_a_categorical_claim():
 
 
 @pytest.mark.asyncio
-async def test_null_result_rule_applies_only_to_literature():
+async def test_null_result_rule_applies_only_to_literature(monkeypatch):
     """A news article saying a study "did not reduce" something is reporting,
     not the finding itself. The rule is confined to peer-reviewed abstracts."""
+    from app.config import models
     from app.pipeline import grading
     from app.schemas import RawDocument
+    # Both documents carry the same sentence on purpose; duplicate removal
+    # would (rightly) keep only one of them, so it is off for this test.
+    monkeypatch.setitem(models()["nli"], "dedupe_quotes", False)
 
     lit = RawDocument(url="https://pubmed.ncbi.nlm.nih.gov/9/", title="A review",
                       text="Supplementation did not reduce respiratory infection incidence.",
@@ -1221,3 +1225,59 @@ def test_fallback_text_distinguishes_missing_from_silent():
                    url="https://b.com/x", source_domain="b.com")]
     assert "would require was found" in describe_evidence(
         absent, ev.compute(absent, "medical"))
+
+
+# ------------------------------------------------- reference gate, duplicates
+
+from app.pipeline import grading  # noqa: E402
+
+
+def test_overlap_folds_accents_and_possessives():
+    claim = "A Pokémon GO player in Oregon was stabbed"
+    assert grading.claim_overlap("The Pokemon player from Oregon", claim) > 0.5
+    # terms are 6-letter prefixes, so the possessive form meets the plain one
+    assert grading.content_terms("Brennan's spokesman") == grading.content_terms("Brennan spokesman")
+    assert grading.claim_names("Germany's Black Forest caused 15,000 cases") == {"black", "forest"}
+
+
+def test_name_in_headline_counts():
+    claim = "A baby was thrown from Grenfell Tower and caught by a man."
+    sent = "A witness saw a man catch a kid thrown out of the window from the eighth floor."
+    assert not grading.about_claim(sent, "", claim, 0.15)
+    assert grading.about_claim(sent, "Grenfell Tower: the baby that was caught", claim, 0.15)
+
+
+def test_offtopic_contradiction_is_not_a_refutation(monkeypatch):
+    """Dataset A 0006: an unrelated BBC sentence 'refuted' the claim at 0.99."""
+    import asyncio
+    from app.schemas import RawDocument
+    from app.config import models
+    monkeypatch.setitem(models()["nli"], "reference_min_overlap", 0.15)
+
+    async def fake(pairs):
+        return [{"entailment": 0.0, "neutral": 0.01, "contradiction": 0.99} for _ in pairs]
+    monkeypatch.setattr(grading.nli, "classify_async", fake)
+    claim = "Germany's Black Forest caused 15,000 missing person cases last year."
+    docs = [
+        RawDocument(url="https://www.bbc.com/a", title="", source_domain="bbc.com",
+                    channel="authority",
+                    text="Two-year-old Katrice Lee went missing while shopping with her mum."),
+        RawDocument(url="https://news.example/b", title="", source_domain="news.example",
+                    channel="open_web",
+                    text="Police say the Black Forest saw no rise in missing person cases last year."),
+    ]
+    items = asyncio.run(grading.grade(docs, claim, 1, "general"))
+    by = {str(i.url): i.stance for i in items}
+    assert by["https://www.bbc.com/a"] == "insufficient"
+    assert by["https://news.example/b"] == "refutes"
+
+
+def test_duplicate_quotes_count_once():
+    q = ("The bodycam video shows the officer telling McNeil he has been pulled over "
+         "for not wearing his seatbelt.")
+    items = [item(id=1, url="https://www.bbc.com/news/x", quote=q, source_domain="bbc.com"),
+             item(id=2, url="http://news.bbc.co.uk/news/x", quote=q, source_domain="news.bbc.co.uk"),
+             item(id=3, url="https://other.example/y", quote="A different sentence about the stop entirely.",
+                  source_domain="other.example")]
+    kept = grading.dedupe(items)
+    assert [i.id for i in kept] == [1, 3]

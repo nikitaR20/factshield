@@ -46,7 +46,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "backend"))
 sys.path.insert(0, str(ROOT))
 
-from app.config import PIPELINE_VERSION  # noqa: E402
+from app.config import PIPELINE_VERSION, models  # noqa: E402
 from app.pipeline import decide, grading, scoring  # noqa: E402
 from app.pipeline import evidence_state as ev  # noqa: E402
 from app.providers import nli  # noqa: E402
@@ -67,6 +67,11 @@ def split_of(claim_id: str) -> str:
 TO_STUDY = {"supported": "supported", "refuted": "refuted",
             "unresolved": "not_enough_evidence", "partly_supported": "partly_supported"}
 CONDITIONS = ("fs_computed", "fs_explained", "fs_no_abstain")
+
+
+def nli_model_name() -> str:
+    loaded = nli._load()
+    return getattr(loaded[1], "name_or_path", "transformers") if loaded else "lexical-stub"
 
 
 def pack_docs(pack: dict) -> list[RawDocument]:
@@ -109,7 +114,7 @@ async def run_one(claim: dict, pack: dict, condition: str) -> dict:
         verdict, forced = forced_lean(items, category, state.n_independent_domains), True
     return {
         "kind": "main", "claim_id": claim["id"], "split": split_of(claim["id"]),
-        "condition": condition, "model": "factshield", "model_version": f"{PIPELINE_VERSION}/nli:{nli.backend_name()}",
+        "condition": condition, "model": "factshield", "model_version": f"{PIPELINE_VERSION}/nli:{nli_model_name()}",
         "run_index": 0, "live_search": False, "pack_hash": pack.get("pack_hash"),
         "parsed_verdict": TO_STUDY[verdict], "response_text": None,
         "confidence": None, "cited_ids": [], "cited_urls": [], "tool_calls": [],
@@ -123,8 +128,12 @@ async def run_one(claim: dict, pack: dict, condition: str) -> dict:
             "explanation": d.verdict.explanation,
             "n_items": len(items),
             "stances": [i.stance for i in items],
-            "items": [{"url": str(i.url), "tier": i.tier, "role": i.role, "stance": i.stance,
-                       "conf": i.stance_confidence, "quote": i.quote} for i in items],
+            "items": [{"url": str(i.url), "title": i.title, "date": i.published_date,
+                       "domain": i.source_domain, "tier": i.tier, "role": i.role,
+                       "stance": i.stance, "conf": i.stance_confidence, "quote": i.quote}
+                      for i in items],
+            "settings": {k: models().get("nli", {}).get(k) for k in
+                         ("reference_min_overlap", "dedupe_quotes", "min_confidence")},
         },
     }
 
@@ -133,6 +142,9 @@ async def main_async(args) -> None:
     from study.common import load_claims
     from study.packs import PackError, load_pack
 
+    if args.nli_model:
+        # Must happen before the first NLI call; the model is loaded once.
+        models()["nli"]["model_candidates"] = [args.nli_model]
     if nli.backend_name() != "transformers" and not args.allow_stub:
         raise SystemExit("NLI model not loaded (lexical stub). Results would not describe "
                          "FactShield. Install transformers/torch, or pass --allow-stub for a dry run.")
@@ -182,6 +194,9 @@ def main() -> None:
                     help="fs_explained makes one model call per non-abstained claim")
     ap.add_argument("--ids", help="comma-separated claim ids (default: all)")
     ap.add_argument("--split", choices=("dev", "test", "all"), default="all")
+    ap.add_argument("--nli-model", help="Hugging Face name of the stance model to use "
+                    "instead of the models.yaml candidates, e.g. "
+                    "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli")
     ap.add_argument("--allow-stub", action="store_true",
                     help="run with the keyword stub; for testing the plumbing only")
     asyncio.run(main_async(ap.parse_args()))

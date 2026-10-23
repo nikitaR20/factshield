@@ -40,7 +40,7 @@ def test_rows_score_with_study_code(tmp_path, monkeypatch):
     class Args:
         pass
     a = Args()
-    a.out, a.conditions, a.ids, a.allow_stub, a.split = str(out), "fs_computed,fs_no_abstain", None, True, "all"
+    a.out, a.conditions, a.ids, a.allow_stub, a.split, a.nli_model = str(out), "fs_computed,fs_no_abstain", None, True, "all", None
     asyncio.run(F.main_async(a))
 
     rows = read_jsonl(out)
