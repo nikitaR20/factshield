@@ -25,7 +25,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
 from app.pipeline import evidence_state as ev  # noqa: E402
-from app.pipeline import grading, scoring, stages  # noqa: E402
+from app.pipeline import decide, grading  # noqa: E402
 from app.providers.llm import LLMError, complete_json  # noqa: E402
 from app.schemas import RawDocument, SubClaim  # noqa: E402
 
@@ -65,8 +65,13 @@ def _filter_docs(docs: list[dict], condition: str) -> list[RawDocument]:
     return items
 
 
-async def run_retrieval_condition(record: dict, condition: str) -> dict:
-    """full | open_web_only | no_page_context — all run against the snapshot."""
+async def run_retrieval_condition(record: dict, condition: str, explain: bool = False) -> dict:
+    """full | open_web_only | no_page_context — all run against the snapshot.
+
+    `explain=False` (the default) makes no model call: the verdict is the
+    computed one, before the explanation model's one-directional downgrade.
+    `full_explained` runs that step too, at the cost of one call per claim.
+    """
     tri = record["triage"]
     category = "general" if condition == "open_web_only" else tri["category"]
     jurisdiction = tri.get("jurisdiction")
@@ -88,51 +93,19 @@ async def run_retrieval_condition(record: dict, condition: str) -> dict:
 
         state = ev.compute(items, category, jurisdiction,
                            record.get("page_published"))
-        reason = ev.should_abstain(state, items)
-        if reason:
-            results.append({
-                "condition": condition, "sub_claim_id": sub.id,
-                "claim_verdict": "unresolved",
-                "evidence_standing": ev.standing_for_abstention(state, items),
-                "support_score": None, "abstained": True,
-                "abstain_kind": ev.abstention_kind(state, items),
-                "n_evidence": len(items),
-            })
-            continue
-
-        fast = stages.fast_path_verdict(sub, items)
-        if fast is not None:
-            results.append({
-                "condition": condition, "sub_claim_id": sub.id,
-                "claim_verdict": fast.claim_verdict,
-                "evidence_standing": fast.evidence_standing,
-                "support_score": fast.support_score, "abstained": False,
-                "fast_path": True, "n_evidence": len(items),
-            })
-            continue
-
-        score, basis = scoring.compute_score(
-            items, category, state.n_independent_domains,
-            attribution_extracted=sub.attribution_extracted,
-        )
-        verdict, standing = scoring.derive_verdict(
-            score, state, items, attribution_extracted=sub.attribution_extracted
-        )
-        if score is None:
-            results.append({
-                "condition": condition, "sub_claim_id": sub.id,
-                "claim_verdict": "unresolved",
-                "evidence_standing": ev.standing_for_abstention(state, items),
-                "support_score": None, "score_basis": basis, "abstained": True,
-                "abstain_kind": ev.abstention_kind(state, items, scored=False),
-                "n_evidence": len(items),
-            })
-            continue
+        # The API's own decision function. This copy used to check abstention
+        # before the fast path and skip the explanation downgrade, so it
+        # measured a slightly different system from the one users get.
+        d = await decide.decide(sub, items, state, category, explain=explain)
+        v = d.verdict
         results.append({
             "condition": condition, "sub_claim_id": sub.id,
-            "claim_verdict": verdict, "evidence_standing": standing,
-            "support_score": score, "score_basis": basis,
-            "abstained": False, "n_evidence": len(items),
+            "claim_verdict": v.claim_verdict,
+            "evidence_standing": v.evidence_standing,
+            "support_score": v.support_score, "score_basis": v.score_basis,
+            "abstained": v.abstained, "abstain_kind": d.abstain_kind,
+            "fast_path": d.fast_path, "explained": d.explained,
+            "downgraded": d.downgraded, "n_evidence": len(items),
         })
 
     return results[0] if len(results) == 1 else {
@@ -159,6 +132,7 @@ def _combine(verdicts: list[str]) -> str:
 CONDITIONS = {
     "parametric": run_parametric,
     "full": lambda r: run_retrieval_condition(r, "full"),
+    "full_explained": lambda r: run_retrieval_condition(r, "full", explain=True),
     "open_web_only": lambda r: run_retrieval_condition(r, "open_web_only"),
     "no_page_context": lambda r: run_retrieval_condition(r, "no_page_context"),
 }

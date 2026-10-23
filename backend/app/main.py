@@ -31,7 +31,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import cache
 from .config import PIPELINE_VERSION, env, flag, models
 from .pipeline import evidence_state as ev
-from .pipeline import grading, scoring, stages
+from .pipeline import decide, grading, stages
 from .providers import discover, nli
 from .retrieval import retrieve
 from .schemas import (
@@ -239,109 +239,14 @@ async def check(
                            tri.jurisdiction, ctx.page_published)
         state_overall = state_overall or state
 
-        # A fact-checker who reviewed THIS claim outranks every abstention
-        # rule: they are a human expert who already resolved it. Checking the
-        # rules first meant a claim backed by a matching Snopes verdict could
-        # still be abstained on.
-        fast = stages.fast_path_verdict(claim, items, state)
-        if fast is not None:
-            fast_path_used = True
-            verdicts.append(fast)
-            continue
-
-        # Otherwise short circuit BEFORE any model call. No evidence, no
-        # verdict request — the model cannot hallucinate on a call not made.
-        reason = ev.should_abstain(state, items)
-        if reason:
-            verdicts.append(
-                SubClaimVerdict(
-                    sub_claim_id=claim.id, sub_claim_text=claim.text,
-                    claim_verdict="unresolved",
-                    # Derived from WHY it abstained, not hardcoded. Reporting
-                    # "amplified" for a claim with no common origin was simply
-                    # inaccurate.
-                    evidence_standing=ev.standing_for_abstention(state, items),
-                    support_score=None, abstained=True, abstention_reason=reason,
-                    explanation=stages.describe_evidence(items, state),
-                )
-            )
-            continue
-
-        score, basis = scoring.compute_score(
-            items, tri.category, state.n_independent_domains,
-            attribution_extracted=claim.attribution_extracted,
-        )
-        verdict, standing = scoring.derive_verdict(
-            score, state, items, attribution_extracted=claim.attribution_extracted
-        )
-
-        # Too little evidence to score IS an abstention. Previously this path
-        # returned `unresolved` with `abstained: false`, called the model
-        # anyway, and got back `expert_sources_disagree` when no experts had
-        # disagreed. Those labels are what the analysis counts, so they must
-        # agree with the evidence. Stopping here also saves the model call.
-        if score is None:
-            verdicts.append(
-                SubClaimVerdict(
-                    sub_claim_id=claim.id, sub_claim_text=claim.text,
-                    claim_verdict="unresolved",
-                    evidence_standing=ev.standing_for_abstention(state, items),
-                    support_score=None, score_basis=basis,
-                    abstained=True,
-                    abstention_reason=(
-                        "Sources were found, but too few took a clear position "
-                        "to support a verdict."
-                    ),
-                    explanation=stages.describe_evidence(items, state),
-                    cited_evidence_ids=[i.id for i in items
-                                        if i.stance in ("supports", "refutes")][:3],
-                )
-            )
-            continue
-
-        pattern, explanation, cited, _ = await stages.explain(
-            claim, items, state, verdict, standing, max_items=max_items
-        )
-
-        # The model picks a pattern that describes the evidence. Reject any
-        # pattern the evidence plainly contradicts.
-        pattern = scoring.validate_pattern(pattern, items)
-
-        # One-directional: the model may weaken the computed verdict, never
-        # strengthen it. See scoring.apply_pattern_downgrade.
-        before = verdict
-        verdict, standing = scoring.apply_pattern_downgrade(
-            verdict, standing, pattern)
-        downgraded = verdict != before
-        if downgraded:
-            # The score measures evidence AGREEMENT and stays as computed; the
-            # verdict now also reflects a semantic check the arithmetic cannot
-            # see. Recording why keeps "100/100, partly supported" explainable
-            # instead of looking like a contradiction.
-            basis = {**basis, "downgraded_from": 1.0,
-                     "downgrade_pattern": pattern}
-        explanation, cited, total, dropped = stages.ground(explanation, items)
-        grounding_total += total
-        grounding_dropped += dropped
-
-        # Grounding can legitimately delete everything the model wrote. Show a
-        # computed description rather than an empty box — it is assembled from
-        # counts, so it cannot fabricate.
-        if not explanation.strip():
-            explanation = stages.describe_evidence(
-                items, state, downgrade_pattern=pattern if downgraded else None
-            )
-            cited = [i.id for i in items[:3]]
-
-        verdicts.append(
-            SubClaimVerdict(
-                sub_claim_id=claim.id, sub_claim_text=claim.text,
-                claim_verdict=verdict, evidence_standing=standing,
-                support_score=score, score_basis=basis,
-                explanation_pattern=pattern or None,
-                explanation=explanation, cited_evidence_ids=cited,
-            )
-        )
+        # The same function the benchmark measures (eval/conditions.py), so a
+        # reported result describes this endpoint.
+        d = await decide.decide(claim, items, state, tri.category,
+                                max_items=max_items)
+        fast_path_used = fast_path_used or d.fast_path
+        grounding_total += d.grounding_total
+        grounding_dropped += d.grounding_dropped
+        verdicts.append(d.verdict)
     t = mark("verdict", t)
     timings["total"] = round((time.perf_counter() - t0) * 1000, 1)
 
