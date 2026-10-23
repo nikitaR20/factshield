@@ -40,7 +40,7 @@ def test_rows_score_with_study_code(tmp_path, monkeypatch):
     class Args:
         pass
     a = Args()
-    a.out, a.conditions, a.ids, a.allow_stub = str(out), "fs_computed,fs_no_abstain", None, True
+    a.out, a.conditions, a.ids, a.allow_stub, a.split = str(out), "fs_computed,fs_no_abstain", None, True, "all"
     asyncio.run(F.main_async(a))
 
     rows = read_jsonl(out)
@@ -67,3 +67,10 @@ def test_partly_supported_is_committed_and_wrong():
            "pack_hash": "h", "error": None}
     s = score.score_rows([row], claims, {"a": {"passages": []}})[0]
     assert s["committed"] == 1 and s["correct"] == 0 and s["confidently_wrong"] == 1
+
+
+def test_split_is_fixed_and_roughly_a_third():
+    ids = [f"claims - Dataset A-{i:04d}" for i in range(1, 46)]
+    dev = [i for i in ids if F.split_of(i) == "dev"]
+    assert F.split_of(ids[0]) == F.split_of(ids[0])
+    assert 8 <= len(dev) <= 22

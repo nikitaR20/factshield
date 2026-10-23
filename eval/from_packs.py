@@ -52,6 +52,18 @@ from app.pipeline import evidence_state as ev  # noqa: E402
 from app.providers import nli  # noqa: E402
 from app.schemas import RawDocument, SubClaim  # noqa: E402
 
+def split_of(claim_id: str) -> str:
+    """Fixed dev/test split, decided before any FactShield result was seen.
+
+    Improvements are designed by looking at DEV failures only; TEST claims are
+    scored before and after, never inspected in between. Without this the
+    reported gain would partly be the 45 claims being fitted. Deterministic on
+    the id, so it cannot be nudged: roughly one claim in three is dev.
+    """
+    import hashlib
+    return "dev" if int(hashlib.sha256(claim_id.encode()).hexdigest(), 16) % 3 == 0 else "test"
+
+
 TO_STUDY = {"supported": "supported", "refuted": "refuted",
             "unresolved": "not_enough_evidence", "partly_supported": "partly_supported"}
 CONDITIONS = ("fs_computed", "fs_explained", "fs_no_abstain")
@@ -96,8 +108,8 @@ async def run_one(claim: dict, pack: dict, condition: str) -> dict:
     if condition == "fs_no_abstain" and verdict == "unresolved":
         verdict, forced = forced_lean(items, category, state.n_independent_domains), True
     return {
-        "kind": "main", "claim_id": claim["id"], "condition": condition,
-        "model": "factshield", "model_version": f"{PIPELINE_VERSION}/nli:{nli.backend_name()}",
+        "kind": "main", "claim_id": claim["id"], "split": split_of(claim["id"]),
+        "condition": condition, "model": "factshield", "model_version": f"{PIPELINE_VERSION}/nli:{nli.backend_name()}",
         "run_index": 0, "live_search": False, "pack_hash": pack.get("pack_hash"),
         "parsed_verdict": TO_STUDY[verdict], "response_text": None,
         "confidence": None, "cited_ids": [], "cited_urls": [], "tool_calls": [],
@@ -128,6 +140,8 @@ async def main_async(args) -> None:
     if args.ids:
         want = set(args.ids.split(","))
         claims = [c for c in claims if c["id"] in want]
+    if args.split != "all":
+        claims = [c for c in claims if split_of(c["id"]) == args.split]
     conds = [c for c in args.conditions.split(",") if c in CONDITIONS]
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -152,8 +166,12 @@ async def main_async(args) -> None:
                 fh.write(json.dumps(row, default=str, ensure_ascii=False) + "\n")
                 fh.flush()
                 n += 1
-                print(f"{c['id']:<28}{cond:<15}{row.get('parsed_verdict')!s:<22}"
-                      f"gold={c['label']}{'  ERROR ' + row['error'] if row.get('error') else ''}")
+                # Test verdicts are not printed: they are for the before/after
+                # comparison only, and reading them would steer the fixes.
+                shown = (f"{row.get('parsed_verdict')!s:<22}gold={c['label']}"
+                         if split_of(c["id"]) == "dev" else "(test: hidden)")
+                print(f"{c['id']:<28}{cond:<15}{shown}"
+                      f"{'  ERROR ' + row['error'] if row.get('error') else ''}")
     print(f"\n{n} rows appended to {out}")
 
 
@@ -163,6 +181,7 @@ def main() -> None:
     ap.add_argument("--conditions", default="fs_computed,fs_no_abstain",
                     help="fs_explained makes one model call per non-abstained claim")
     ap.add_argument("--ids", help="comma-separated claim ids (default: all)")
+    ap.add_argument("--split", choices=("dev", "test", "all"), default="all")
     ap.add_argument("--allow-stub", action="store_true",
                     help="run with the keyword stub; for testing the plumbing only")
     asyncio.run(main_async(ap.parse_args()))
