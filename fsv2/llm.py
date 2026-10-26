@@ -139,15 +139,32 @@ async def _stub(cfg: dict, system: str, user: str, live: bool,
     key = f"{cfg['model']}|{cfg.get('temperature')}|{system}|{user}"
     h = int(hashlib.sha256(key.encode()).hexdigest(), 16)
     pids = sorted(set(re.findall(r"^\[(P\d+)\]", user, flags=re.M)), key=lambda x: int(x[1:]))
-    if '"sentences"' in user:  # explanation prompt
+    if '"checking_as"' in user:  # claim extraction prompt
+        sel = user.split("SELECTION:\n", 1)[-1].strip()
+        sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", sel) if len(s.strip()) > 15][:8]
+        claims = [{"original": s, "checking_as": s, "resolved": i % 4 != 3,
+                   "unclear": None if i % 4 != 3 else "stub: unclear reference (test)",
+                   "queries": [s[:60], " ".join(s.split()[:5])]} for i, s in enumerate(sents)]
+        text = json.dumps({"claims": claims, "skipped": [{"text": "stub opinion", "reason": "opinion"}]})
+    elif '"same"' in user:  # fact-check match prompt
+        text = json.dumps({"same": [1]})
+    elif '"sentences"' in user:  # explanation prompt
         cite = pids[h % len(pids)] if pids else "P1"
-        text = json.dumps({"sentences": [f"The passage discusses the subject [{cite}].",
+        # Quote the start of the cited passage, so the stub checker can confirm it
+        # and the explanation screen can be seen offline.
+        m = re.search(rf"^\[{cite}\].*?\nURL: [^\n]*\n([^\n]+)", user, flags=re.M | re.S)
+        first = re.split(r"(?<=[.!?])\s+", m.group(1))[0].rstrip(".") if m else "The passage discusses it"
+        text = json.dumps({"sentences": [f"{first} [{cite}].",
                                          "Summary: no passage gives a date."]})
     elif h % 13 == 0:
         text = "I think the claim is probably true."          # not JSON
     else:
-        # Bias toward agreement so the unanimous path is exercised too.
-        verdict = VERDICTS[(h >> 3) % 4] if (h >> 7) % 3 == 0 else VERDICTS[3]
+        # Mostly decided by the claim alone, so the three stub models usually
+        # agree and every result screen can be seen offline; one claim in five
+        # gets model-dependent (disagreeing) answers.
+        claim_only = user.split("CLAIM:\n", 1)[-1].split("\n", 1)[0]
+        hc = int(hashlib.sha256(claim_only.encode()).hexdigest(), 16)
+        verdict = VERDICTS[(h >> 3) % 4] if hc % 5 == 0 else VERDICTS[hc % 4]
         if "supported" in cfg["model"]:  # used by tests to force a verdict
             verdict = "supported"
         cited = [pids[(h >> 11) % len(pids)]] if pids else []

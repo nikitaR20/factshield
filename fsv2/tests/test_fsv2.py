@@ -18,6 +18,21 @@ from study.models import CallResult
 
 # ------------------------------------------------------------ fixtures
 
+# The tests use their own model settings, never the real study/config.yaml,
+# so they do not change meaning when the owner edits model settings (e.g.
+# Gemini at temperature: null). Settings-dependent behaviour is tested below
+# with explicit configs.
+def _models(**temps):
+    return {"models": {k: {"provider": k, "model": f"m-{k}", "temperature": temps.get(k, 0),
+                           "max_output_tokens": 100, "timeout_s": 1}
+                       for k in ("openai", "gemini", "groq")}}
+
+
+@pytest.fixture(autouse=True)
+def fixed_models(monkeypatch):
+    monkeypatch.setattr(llm, "study_config", lambda: _models())
+
+
 def pack(*passages):
     return {"claim_id": "c1", "claim": "The tower was completed in 1999.", "pack_hash": "h",
             "passages": [{"pid": f"P{i+1}", "url": f"https://{d}/a{i}", "title": "t",
@@ -135,7 +150,7 @@ def test_unanimous_refuted_with_confirmed_statement(monkeypatch):
     res, s, chk = run(monkeypatch, {"openai": [REFUTE], "gemini": [REFUTE], "groq": [REFUTE]})
     assert res["final"] == "refuted" and res["path"] == "unanimous_round1"
     assert res["cited_pids"] == ["P1"] and len(s.calls) == 3
-    assert all(t == 0 for _, t in s.calls) or all(t is None for _, t in s.calls)
+    assert all(t == 0 for _, t in s.calls)          # round 1 = each model's study temperature
 
 
 def test_checker_failure_downgrades(monkeypatch):
@@ -194,13 +209,22 @@ def test_api_error_is_recorded_not_guessed(monkeypatch):
 
 
 def test_models_without_temperature_never_get_one(monkeypatch):
-    import study.models as sm
-    real = sm.config()
-    fake = {**real, "models": {**real["models"],
-                               "openai": {**real["models"]["openai"], "temperature": None}}}
-    monkeypatch.setattr(llm, "study_config", lambda: fake)
-    assert llm.panel_cfg("openai", temperature=0.7)["temperature"] is None
-    assert llm.panel_cfg("gemini", temperature=0.7)["temperature"] == 0.7
+    monkeypatch.setattr(llm, "study_config", lambda: _models(gemini=None))
+    assert llm.panel_cfg("gemini", temperature=0.7)["temperature"] is None
+    assert llm.panel_cfg("gemini")["temperature"] is None
+    assert llm.panel_cfg("openai", temperature=0.7)["temperature"] == 0.7
+
+
+def test_extra_round_with_a_temperature_null_model(monkeypatch):
+    # The owner's real setup: Gemini runs with temperature null.
+    monkeypatch.setattr(llm, "study_config", lambda: _models(gemini=None))
+    res, s, _ = run(monkeypatch, {"openai": [REFUTE, REFUTE, NEE],
+                                  "gemini": [NEE, REFUTE, REFUTE],
+                                  "groq": [REFUTE, NEE, REFUTE]})
+    extra = s.calls[3:]
+    assert len(extra) == 6 and res["final"] == "refuted"
+    assert {t for k, t in extra if k == "gemini"} == {None}
+    assert {t for k, t in extra if k != "gemini"} == {0.7}
 
 
 # ------------------------------------------------------------ explanation
@@ -214,6 +238,39 @@ def test_explanation_keeps_checked_and_summary_drops_uncited(monkeypatch):
     e = res["explanation"]
     assert [k["kind"] for k in e["sentences"]] == ["fact", "summary"]
     assert e["dropped"][0]["why"] == "no valid citation" and not e["quotes_only"]
+
+
+def test_verdict_prompt_states_absence_is_not_refutation():
+    from fsv2.settings import cfg
+    _, user, _ = decide.build_prompt(BASIC["claim"], ev.prepare(BASIC))
+    assert cfg()["prompt_version"] == "v2"
+    assert "no evidence for the claim" in user and "do NOT establish that it is false" in user
+    assert "{claim}" not in user and "{passages}" not in user
+
+
+def test_citation_forms_accepted():
+    assert decide._cited_ids("Fact 【P1】【P2】.") == ["P1", "P2"]
+    assert decide._cited_ids("Fact [P1, P3] and ［P4］ and (P5).") == ["P1", "P3", "P4", "P5"]
+    assert decide._cited_ids("Rates rose (per cent) in 2026 (P is for pressure).") == []
+    assert decide._CITE.sub("", "Fact 【P1】 here [P2].").strip() == "Fact  here ."
+
+
+def test_all_facts_dropped_means_quotes_only(monkeypatch):
+    expl = json.dumps({"sentences": ["The tower was built in 1889.",          # no citation
+                                     "It was a fair landmark.",                # no citation
+                                     "Summary: no passage mentions 1999."]})
+    res, _, _ = run(monkeypatch, {"openai": [REFUTE], "gemini": [REFUTE], "groq": [REFUTE, expl]},
+                    explain=True)
+    e = res["explanation"]
+    assert e["quotes_only"] and e["sentences"] == [] and len(e["dropped"]) == 2
+
+
+def test_fullwidth_citations_are_checked_not_dropped(monkeypatch):
+    expl = json.dumps({"sentences": ["The tower was completed in 1889 【P1】."]})
+    res, _, _ = run(monkeypatch, {"openai": [REFUTE], "gemini": [REFUTE], "groq": [REFUTE, expl]},
+                    explain=True)
+    e = res["explanation"]
+    assert e["sentences"][0]["passages"] == ["P1"] and not e["dropped"] and not e["quotes_only"]
 
 
 # ------------------------------------------------------------ split & rows

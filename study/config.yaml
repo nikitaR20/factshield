@@ -134,7 +134,7 @@ models:
     timeout_s: 90
   gemini:
     provider: gemini
-    model: gemini-3.8-flash
+    model: gemini-3.5-flash-lite
     temperature: null        # Google says to remove temperature for 3.8
     thinking_level: low      # lowest allowed; null means "medium"
     max_output_tokens: 4000

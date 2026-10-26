@@ -189,7 +189,15 @@ async def check_claim(claim: str, pack: dict, *, checker, stub: bool,
 
 # ---------------------------------------------------------------- stage 6
 
-_CITE = re.compile(r"\[(P\d+)\]")
+# A citation is a bracket holding only passage ids: [P1], [P1, P2], and the
+# full-width forms some models emit (【P1】, ［P1］, （P1）). Seen in the
+# 2026-10-26 smoke test: gpt-oss wrote 【P1】【P2】 and every cited sentence was
+# dropped as uncited. Ordinary parentheses count only when they hold ids alone.
+_CITE = re.compile(r"[\[【［(（]\s*(P\d+(?:\s*[,;]\s*P\d+)*)\s*[\]】］)）]")
+
+
+def _cited_ids(sentence: str) -> list[str]:
+    return [p for grp in _CITE.findall(sentence) for p in re.findall(r"P\d+", grp)]
 
 
 async def explain_verdict(claim, verdict, reason, items, samples, cited, checker, stub,
@@ -221,7 +229,7 @@ async def explain_verdict(claim, verdict, reason, items, samples, cited, checker
         if s.lower().startswith("summary:"):
             slots[i] = {"text": s, "kind": "summary", "passages": []}
             continue
-        ids = [p for p in _CITE.findall(s) if p in valid]
+        ids = list(dict.fromkeys(p for p in _cited_ids(s) if p in valid))
         if not ids:
             dropped.append({"text": s, "why": "no valid citation"})
             continue
@@ -237,7 +245,10 @@ async def explain_verdict(claim, verdict, reason, items, samples, cited, checker
                 dropped.append({"text": s, "why": f"checker {p:.2f}", "passages": ids})
     kept = [x for x in slots if x is not None]
     factual = [k for k in kept if k["kind"] == "fact"]
-    n_fact = len(factual) + len([d for d in dropped if d.get("passages")])
+    # Every non-summary sentence counts, including ones dropped for having no
+    # usable citation; otherwise an explanation whose facts were ALL dropped
+    # could pass as complete with only its "Summary:" lines left.
+    n_fact = len(factual) + len(dropped)
     quotes_only = n_fact > 0 and len(factual) / n_fact < conf["explanation"]["min_surviving_share"]
     return {"error": r.error, "model_version": r.model_version, "prompt_sha": sha,
             "sentences": [] if quotes_only else kept, "dropped": dropped,

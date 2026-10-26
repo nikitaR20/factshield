@@ -3,7 +3,7 @@
 # Every number here was fixed on 2026-10-25, BEFORE any v2 run on dev or test.
 # Changing one after the dev run is a protocol deviation and must be reported.
 
-version: fsv2-0.1
+version: fsv2-0.2
 
 # The panel is the same three models as the study comparison. Names, max
 # tokens, timeouts and reasoning settings are read from study/config.yaml
@@ -20,7 +20,12 @@ extra_sample_temperature: 0.7
 # three (Groq); change if your measurements say otherwise.
 explainer: groq
 
-prompt_version: v1
+# v1: fixed 2026-10-25, used for the first dev run.
+# v2 (2026-10-26): the ONE change made from dev failures. Adds to the
+# `refuted` definition that "no evidence for / not shown" is not refutation.
+# Found on dev claim B-0022, where all three models refuted a claim because
+# researchers "found no evidence" it was true. Explain prompt unchanged.
+prompt_version: v2
 
 evidence:
   # Two passages from different URLs whose 5-word shingles overlap at least
@@ -35,6 +40,18 @@ checker:
   model: flan-t5-large
   threshold: 0.5
   chunk_size: null        # package default (500 words for flan-t5-large)
+
+live:
+  # The browser demo (fsv2/api.py). The thesis runs never use this section.
+  word_cap: 800
+  max_claims_per_check: 3
+  max_search_rounds: 2          # round 2 only when round 1 ends "not enough evidence"
+  results_per_search: 8         # Tavily results per search channel, as for the packs
+  max_passages: 8               # as for the packs
+  max_factcheck_passages: 2     # same-claim fact-checks kept as passages
+  max_chars_per_passage: 1500   # as for the packs
+  helper_model: openai          # claim extraction + "same claim?" check
+  explain: true
 
 explanation:
   max_sentences: 4

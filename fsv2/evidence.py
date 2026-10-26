@@ -126,7 +126,9 @@ def prepare(pack: dict) -> list[Prepared]:
         item = Prepared(
             pid=p["pid"], url=p["url"], title=p.get("title") or "(untitled)", domain=dom,
             date=(str(p["published_date"])[:10] if p.get("published_date") else None),
-            text=p.get("text") or "", source_type=source_type(dom), rating=rating(dom),
+            text=p.get("text") or "",
+            source_type=("published fact-check" if p.get("channel") == "factcheck" else source_type(dom)),
+            rating=rating(dom),
             credits_wire=[name for name, rx in _WIRE if rx.search(p.get("text") or "")],
         )
         sh[item.pid] = shingles(item.text, ev["shingle_words"])

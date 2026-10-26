@@ -24,6 +24,7 @@ real MiniCheck has run yet, so nothing is known about its accuracy.
    ```
    pip install torch --index-url https://download.pytorch.org/whl/cpu
    pip install "minicheck @ git+https://github.com/Liyan06/MiniCheck.git@main"
+   pip install accelerate   # MiniCheck loads with device_map; not in its dependency list
    python -c "import nltk; nltk.download('punkt_tab')"
    ```
 3. Measure it: `python -m fsv2.speedtest`. The first run downloads the
@@ -65,4 +66,48 @@ stub models were used.
   bbc.co.uk → bbc); unrelated sites sharing a label would be grouped wrongly.
 
 ## Tests
-`python -m pytest fsv2/tests -q` (19 tests, offline).
+`python -m pytest fsv2/tests -q` (31 tests, offline).
+
+## Change log
+- fsv2-0.1 / prompt v1 (2026-10-25): design as decided; first dev run.
+- fsv2-0.2 / prompt v2 (2026-10-26): the single change made from dev failures.
+  The verdict prompt now says that "no evidence for the claim / not shown" is
+  not_enough_evidence, not refuted (dev claim B-0022). Explain prompt unchanged.
+  Dev is re-run with v2 before the test run. Test is run once, in two parts
+  (Groq free-plan daily token limit): `test_ids_part1.txt`, `test_ids_part2.txt`.
+
+## Browser demo (live checks) — added 2026-10-26
+
+New files: `fsv2/live.py` (claim extraction, searches, passages), `fsv2/api.py`
+(local server), prompts `extract.v2.txt` and `match.v2.txt`, and a rebuilt
+`extension/`. The thesis path (`run_packs.py`, packs, verdict rule) is unchanged.
+
+Run (from the repo root, PowerShell):
+```
+python -m uvicorn fsv2.api:app --port 8000          # real search and models
+$env:FSV2_STUB="1"; python -m uvicorn fsv2.api:app --port 8000   # offline test mode
+Remove-Item Env:FSV2_STUB                           # back to real mode afterwards
+```
+The first real start loads MiniCheck (about a minute). Then in Chrome:
+`chrome://extensions` → Developer mode → Load unpacked → the `extension` folder
+(or press Reload on it if already loaded). Highlight text → right-click →
+**Check with FactShield** (or Alt+Shift+F).
+
+What one real claim costs: 1 call to extract claims (whole selection), 1 call
+for the "same claim?" check, 3 panel calls (9 if the models disagree), 1
+explanation call, 2 Tavily searches (4 if a second round runs, i.e. ~4–8
+credits). Groq's free 200K tokens/day is shared with the thesis runs: do real
+demo checks only after the day's thesis run.
+
+Deliberate differences from the design (state them in the write-up):
+- Passages are chosen with the packs' lexical sentence selection, not a local
+  embedding model (design 3c): keeps demo evidence in the same form as the
+  thesis evidence and adds no dependency.
+- Fact-check sites are allowed in live search; Fact Check API ratings are used
+  only after the "same claim?" check, otherwise shown as related.
+- Page text comes from Tavily's search results, as in the packs (no separate
+  full-page download).
+- A single clear claim goes straight to checking only if nothing was skipped;
+  if something was skipped the list is shown, so the user sees what was not checked.
+- Search errors are shown in the result ("Some searches failed: ..."), never
+  turned silently into "no results".

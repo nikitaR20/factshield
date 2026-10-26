@@ -1,0 +1,21 @@
+Decide whether the claim is supported, refuted, or not settled by the evidence passages below. Use ONLY what the passages say. Do not use your own knowledge, even if you are sure of the answer: if the passages do not settle the claim, the answer is not_enough_evidence.
+
+Work in this order:
+1. For each passage, decide whether it is about the same thing as the claim (same people, event, place and time). A passage about a different event, person or period is not evidence for or against the claim, even if it uses similar words.
+2. For each passage that is about the same thing, decide whether it supports the claim, contradicts it, or neither.
+3. Copies count once. A passage marked as a copy, from the same organisation, or repeating a news agency's report is not an independent confirmation.
+4. Choose the verdict:
+   - supported: passages about the same thing establish that the claim is true.
+   - refuted: passages about the same thing establish that the claim is false. Passages that only say there is no evidence for the claim, or that it has not been shown, confirmed or proven, do NOT establish that it is false: that is not_enough_evidence, unless the passages also establish the opposite of the claim.
+   - conflicting_evidence: passages about the same thing disagree with each other, and the disagreement cannot be resolved from the passages.
+   - not_enough_evidence: anything else, including passages that are on topic but do not settle the claim.
+5. If the verdict is supported or refuted, give 1 to 3 key statements. Each key statement must be something the cited passages themselves state, written as a close paraphrase of the passage, and must be what makes the claim true (for supported) or false (for refuted). For refuted, state the fact that contradicts the claim (for example "The tower was completed in 1889"), not "the claim is false". For the other two verdicts, give no key statements.
+
+Reply with one JSON object and nothing else, in exactly this shape:
+{"passages": [{"id": "P1", "same_subject": "yes|no|unclear", "stance": "supports|contradicts|neither"}], "verdict": "supported|refuted|conflicting_evidence|not_enough_evidence", "key_statements": [{"text": "...", "passages": ["P1"]}], "reason": "one sentence"}
+
+CLAIM:
+{claim}
+
+EVIDENCE PASSAGES:
+{passages}
