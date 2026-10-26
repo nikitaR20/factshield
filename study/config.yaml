@@ -82,6 +82,7 @@ claims:
     # Unlisted files use a `set` column if there is one, else the file name.
     set_by_file:
       "claims - Dataset A.csv": A
+      "claims - Dataset B.csv": B
     # Gold labels judged against the frozen PACK, where the fact-checker's
     # rating cannot be reached from the evidence a model is given. The
     # original rating is kept (factcheck_rating, label_original) and the
@@ -90,11 +91,13 @@ claims:
     #   claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on the fatwa"}
     # Decided 2026-10-21 from the Dataset A audit, before any model run.
     label_overrides:
+      claims_Dataset_A-0044: {label: refuted, reason: "pack contains a BBC Newsnight investigation concluding the baby story 'probably never happened'"}
       claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on an ISIS fatwa about puppies"}
       claims_Dataset_A-0004: {label: not_enough_evidence, reason: "pack never mentions any content warning"}
       claims_Dataset_A-0006: {label: not_enough_evidence, reason: "pack has nothing refuting the 15,000 figure; a DW passage cites an unrelated 15,000"}
       claims_Dataset_A-0007: {label: not_enough_evidence, reason: "pack shows World Vision had 60 church partners, but not how many churches opened"}
       claims_Dataset_A-0008: {label: not_enough_evidence, reason: "search returned only fact-checks (excluded) and a petition page; nothing shows texting RBG reaches senators"}
+      claims_Dataset_B-0006: {label: not_enough_evidence, reason: "pack says Rathee lives in Germany; nothing on citizenship"}
     # With no `domain` column, every claim gets this (a key of
     # packs.domain_to_category). `general` searches the web without a
     # subject-specific source pack.
@@ -123,24 +126,24 @@ claims:
 models:
   openai:
     provider: openai
-    model: CHANGE_ME
+    model: gpt-6-luna
     temperature: 0
-    reasoning_effort: null         # e.g. none | low; null = not sent
+    reasoning_effort: none         # e.g. none | low; null = not sent
     max_output_tokens: 1500
     timeout_s: 90
   gemini:
     provider: gemini
-    model: CHANGE_ME
-    temperature: 0
-    thinking_level: null           # e.g. low; null = not sent
-    max_output_tokens: 1500
+    model: gemini-3.8-flash
+    temperature: null        # Google says to remove temperature for 3.8
+    thinking_level: low      # lowest allowed; null means "medium"
+    max_output_tokens: 4000
     timeout_s: 90
   groq:
     provider: groq
-    model: CHANGE_ME
+    model: openai/gpt-oss-120b
     temperature: 0
-    reasoning_effort: null
-    max_output_tokens: 1500
+    reasoning_effort: low    # lowest allowed
+    max_output_tokens: 4000
     timeout_s: 90
   # Offline stand-in. Makes no network call and is never part of the study.
   # Its rows are marked provider=stub. Used for tests and for showing the
@@ -203,7 +206,7 @@ packs:
   exclude_domains: [snopes.com, politifact.com, fullfact.org, factcheck.org, leadstories.com,
                     checkyourfact.com, truthorfiction.com, hoax-slayer.net, africacheck.org,
                     factcheck.afp.com, boomlive.in, altnews.in, misbar.com, logicallyfacts.com,
-                    healthfeedback.org, sciencefeedback.co, climatefeedback.org, metafact.io]
+                    healthfeedback.org, sciencefeedback.co, climatefeedback.org, metafact.io,newsguardtech.com, newsguardrealitycheck.com]
   # Case-insensitive substrings of a URL. Catches fact-check desks on news
   # sites (reuters.com/.../fact-check-..., apnews.com/article/archive-fact-
   # checking-...) and stories whose URL names a fact-checker's verdict.
@@ -211,7 +214,7 @@ packs:
                          fullfact, /hoax-or-fact, /verify/, /truth-o-meter]
   # Individual pages removed after reading them in `python -m study.packs
   # audit`. Exact URLs. Each one is a judgement: note why next to it.
-  exclude_urls: []
+  exclude_urls: [https://www.cip.uw.edu/2026/10/22/election-rumor-rundown-october-22-stella-parton]   # rumour-rundown verdict on B-0016; removed 2026-10-26
   # How a retrieved page becomes the passage a model sees (study/passages.py).
   # Applied to every document after the URL/domain exclusions above. Each
   # removal is recorded in the pack with its reason.
@@ -234,7 +237,7 @@ packs:
     factchecker_names: [Snopes, PolitiFact, FactCheck.org, Full Fact, Lead Stories, Check Your Fact,
                         Truth or Fiction, TruthOrFiction, AFP Fact Check, Reuters Fact Check,
                         AP Fact Check, USA Today Fact Check, Africa Check, Health Feedback,
-                        Science Feedback, the fact-checkers, fact-checkers, fact checkers]
+                        Science Feedback, the fact-checkers, fact-checkers, fact checkers,NewsGuard]
     # Drop a passage sharing less than this share of the claim's content words.
     # Lenient on purpose: word overlap misses paraphrase. At 0.25 it dropped
     # "noctilucent clouds ... linked to global warming" for a claim about "night
