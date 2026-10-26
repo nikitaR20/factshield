@@ -98,6 +98,7 @@ claims:
       claims_Dataset_A-0007: {label: not_enough_evidence, reason: "pack shows World Vision had 60 church partners, but not how many churches opened"}
       claims_Dataset_A-0008: {label: not_enough_evidence, reason: "search returned only fact-checks (excluded) and a petition page; nothing shows texting RBG reaches senators"}
       claims_Dataset_B-0006: {label: not_enough_evidence, reason: "pack says Rathee lives in Germany; nothing on citizenship"}
+      claims_Dataset_B-0016: {label: not_enough_evidence, reason: "after removing the CIP rumour rundown (answer key), pack has nothing on whether machines changed votes"}
     # With no `domain` column, every claim gets this (a key of
     # packs.domain_to_category). `general` searches the web without a
     # subject-specific source pack.
