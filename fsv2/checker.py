@@ -48,7 +48,8 @@ class MiniCheckChecker:
         self.name = f"minicheck:{c['model']}"
         self._chunk = c.get("chunk_size")
         t0 = time.perf_counter()
-        self._m = MiniCheck(model_name=c["model"], cache_dir="./ckpts")
+        with _load_on_cpu():
+            self._m = MiniCheck(model_name=c["model"], cache_dir="./ckpts")
         self.load_seconds = round(time.perf_counter() - t0, 1)
 
     def score(self, docs: list[str], statements: list[str]) -> list[float]:
@@ -56,6 +57,45 @@ class MiniCheckChecker:
             return []
         _, probs, _, _ = self._m.score(docs=docs, claims=statements, chunk_size=self._chunk)
         return [float(p) for p in probs]
+
+
+class _load_on_cpu:
+    """Load MiniCheck's model entirely into ordinary memory.
+
+    MiniCheck's own code passes device_map="auto" to from_pretrained. That lets
+    the accelerate library place weights by its estimate of free RAM, and when
+    the machine is busy (a browser open next to the server) it tries to offload
+    part of the model to disk and fails: "weights offloaded to the disk ...
+    provide an offload_folder" (seen 2026-10-26). Flan-T5-Large needs about
+    3.2 GB, which fits comfortably in 16 GB, so for the duration of the load
+    device_map is dropped and the model is read straight into CPU memory.
+    Nothing about the model or its outputs changes; only where it is loaded.
+    """
+
+    _classes = ("AutoModelForSeq2SeqLM", "AutoModelForSequenceClassification")
+
+    def __enter__(self):
+        import transformers
+        self._patched = []
+        for name in self._classes:
+            cls = getattr(transformers, name, None)
+            if cls is None or "from_pretrained" in cls.__dict__:
+                continue
+            original = cls.from_pretrained
+
+            def patched(*args, _orig=original, **kwargs):
+                kwargs.pop("device_map", None)
+                kwargs.setdefault("low_cpu_mem_usage", True)
+                return _orig(*args, **kwargs)
+
+            cls.from_pretrained = patched
+            self._patched.append(cls)
+        return self
+
+    def __exit__(self, *exc):
+        for cls in self._patched:
+            del cls.from_pretrained  # back to the inherited classmethod
+        return False
 
 
 def load(stub: bool):

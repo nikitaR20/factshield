@@ -291,3 +291,54 @@ def test_rows_have_study_fields(monkeypatch):
         for k in ("claim_id", "condition", "model", "model_version", "run_index",
                   "live_search", "parsed_verdict", "error", "pack_hash"):
             assert k in r
+
+
+def test_minicheck_loader_drops_device_map(monkeypatch):
+    """The CPU-load patch strips device_map during MiniCheck's load and
+    restores transformers afterwards. Uses stand-in modules: no real model."""
+    import sys
+    import types
+    from fsv2 import checker
+
+    calls = []
+
+    class Base:
+        @classmethod
+        def from_pretrained(cls, ckpt, **kw):
+            calls.append((cls.__name__, ckpt, kw))
+            return object()
+
+    class AutoModelForSeq2SeqLM(Base):
+        pass
+
+    fake_tf = types.ModuleType("transformers")
+    fake_tf.AutoModelForSeq2SeqLM = AutoModelForSeq2SeqLM
+
+    class MiniCheck:  # what minicheck.minicheck.MiniCheck does for flan-t5-large
+        def __init__(self, model_name, cache_dir):
+            fake_tf.AutoModelForSeq2SeqLM.from_pretrained(
+                "lytang/MiniCheck-Flan-T5-Large", cache_dir=cache_dir, device_map="auto")
+
+        def score(self, docs, claims, chunk_size=None):  # (labels, probs, chunks, per_chunk)
+            probs = [0.8 if "yes" in d else 0.2 for d in docs]
+            return [p > 0.5 for p in probs], probs, None, None
+
+    mc_pkg = types.ModuleType("minicheck")
+    mc_mod = types.ModuleType("minicheck.minicheck")
+    mc_mod.MiniCheck = MiniCheck
+    monkeypatch.setitem(sys.modules, "transformers", fake_tf)
+    monkeypatch.setitem(sys.modules, "minicheck", mc_pkg)
+    monkeypatch.setitem(sys.modules, "minicheck.minicheck", mc_mod)
+
+    c = checker.MiniCheckChecker()
+    assert c.name == "minicheck:flan-t5-large"
+    name, ckpt, kw = calls[0]
+    assert "device_map" not in kw and kw["low_cpu_mem_usage"] is True and kw["cache_dir"] == "./ckpts"
+    assert "from_pretrained" not in AutoModelForSeq2SeqLM.__dict__      # restored
+    AutoModelForSeq2SeqLM.from_pretrained("x", device_map="auto")
+    assert calls[-1][2] == {"device_map": "auto"}                        # unpatched again
+    # The loaded checker must actually score (2026-10-26: `score` had been
+    # misplaced onto the loader helper and the live check failed).
+    assert c.score(["yes, it says so", "no"], ["s1", "s2"]) == [0.8, 0.2]
+    assert c.score([], []) == []
+    assert not hasattr(checker._load_on_cpu, "score")

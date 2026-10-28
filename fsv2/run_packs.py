@@ -111,7 +111,7 @@ async def main_async(a) -> None:
                 # Test verdicts are never printed: reading them would steer changes.
                 if res.get("error"):
                     shown = "ERROR " + res["error"][:120]
-                elif split_of(c["id"]) == "dev":
+                elif split_of(c["id"]) == "dev" and not a.hide_verdicts:
                     shown = (f"{res['final']:<22}gold={c['label']:<22}"
                              f"{res['path']}, {res.get('reason') or ''}")
                 else:
@@ -130,6 +130,10 @@ def main() -> None:
     ap.add_argument("--stub-models", action="store_true", help="offline stand-in models")
     ap.add_argument("--stub-checker", action="store_true", help="word-overlap stand-in for MiniCheck")
     ap.add_argument("--allow-stub-checker", action="store_true")
+    ap.add_argument("--hide-verdicts", action="store_true",
+                    help="never print verdicts, even for claims whose id hashes to dev "
+                         "(added 2026-10-28 for the 26 new Set B claims, B-0030..B-0055, "
+                         "which are evaluation claims; output only, no effect on verdicts)")
     asyncio.run(main_async(ap.parse_args()))
 
 

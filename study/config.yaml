@@ -99,6 +99,10 @@ claims:
       claims_Dataset_A-0008: {label: not_enough_evidence, reason: "search returned only fact-checks (excluded) and a petition page; nothing shows texting RBG reaches senators"}
       claims_Dataset_B-0006: {label: not_enough_evidence, reason: "pack says Rathee lives in Germany; nothing on citizenship"}
       claims_Dataset_B-0016: {label: not_enough_evidence, reason: "after removing the CIP rumour rundown (answer key), pack has nothing on whether machines changed votes"}
+      claims_Dataset_B-0036: {label: not_enough_evidence, reason: "after removing the Fact Crescendo fact-check (answer key), pack has nothing on a Rs 10,000 note"}
+      claims_Dataset_B-0051: {label: supported, reason: "Reuters/AP/BBC report at least 60 killed, per the Ethiopian Orthodox Church"}
+      claims_Dataset_B-0046: {label: refuted, reason: "pack has studies showing mail-in fraud is rare (Brookings, Heritage database, Reuters)"}
+      
     # With no `domain` column, every claim gets this (a key of
     # packs.domain_to_category). `general` searches the web without a
     # subject-specific source pack.
@@ -207,7 +211,8 @@ packs:
   exclude_domains: [snopes.com, politifact.com, fullfact.org, factcheck.org, leadstories.com,
                     checkyourfact.com, truthorfiction.com, hoax-slayer.net, africacheck.org,
                     factcheck.afp.com, boomlive.in, altnews.in, misbar.com, logicallyfacts.com,
-                    healthfeedback.org, sciencefeedback.co, climatefeedback.org, metafact.io,newsguardtech.com, newsguardrealitycheck.com]
+                    healthfeedback.org, sciencefeedback.co, climatefeedback.org, metafact.io,newsguardtech.com, newsguardrealitycheck.com
+                    ,factcrescendo.com, factseeker.lk]
   # Case-insensitive substrings of a URL. Catches fact-check desks on news
   # sites (reuters.com/.../fact-check-..., apnews.com/article/archive-fact-
   # checking-...) and stories whose URL names a fact-checker's verdict.

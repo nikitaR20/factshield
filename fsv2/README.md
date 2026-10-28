@@ -66,7 +66,7 @@ stub models were used.
   bbc.co.uk → bbc); unrelated sites sharing a label would be grouped wrongly.
 
 ## Tests
-`python -m pytest fsv2/tests -q` (31 tests, offline).
+`python -m pytest fsv2/tests -q` (32 tests, offline).
 
 ## Change log
 - fsv2-0.1 / prompt v1 (2026-10-25): design as decided; first dev run.
