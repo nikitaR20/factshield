@@ -150,6 +150,20 @@ models:
     reasoning_effort: low    # lowest allowed
     max_output_tokens: 4000
     timeout_s: 90
+  # Exploratory fourth panel model, added 2026-10-31 AFTER the main results
+  # were seen. Used only by fsv2/fourth_model.py; NOT in study_models, so the
+  # study runs and the frozen FactShield v2 design are unchanged.
+  # Settings follow the rule used for the other three: lowest reasoning the
+  # model allows. Haiku 5.5 rejects any non-default temperature (HTTP 400),
+  # so none is sent -> its answers are not deterministic (same as Gemini).
+  claude:
+    provider: anthropic
+    model: claude-haiku-5-5
+    temperature: null
+    thinking: disabled       # allowed on Haiku 5.5 at effort high or below
+    effort: low              # sent as output_config.effort
+    max_output_tokens: 4000
+    timeout_s: 90
   # Offline stand-in. Makes no network call and is never part of the study.
   # Its rows are marked provider=stub. Used for tests and for showing the
   # shape of the data before keys exist.

@@ -103,3 +103,32 @@ def test_prompt_files_are_pinned_not_latest(tmp_path, monkeypatch):
 def test_bold_format_fields():
     out = prompts.parse("**Reasoning:** r\n**Verdict:** supported\n**Confidence:** High", "format")
     assert out["parsed_verdict"] == "supported" and out["confidence"] == "high" and out["format_ok"] is True
+
+
+# parser-v4 (2026-10-29): Gemini 3.5 Flash-Lite puts the label on the line after
+# a bare "**Verdict:**" heading; v3 recorded those as unparseable.
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("text,want", [
+    ("**Verdict:**\nsupported\n\n**Reasoning:**\nx", "supported"),
+    ("**VERDICT:**\nrefuted\n\n**REASONING:**\nx", "refuted"),
+    ("**Verdict:** \nrefuted\n\nx", "refuted"),
+    ("Verdict:\nnot enough evidence", "not_enough_evidence"),
+    ("**Verdict:** supported\n\nx", "supported"),
+    ("**Verdict:**\nnot supported", "unparseable"),
+    ("Verdict: supported\nVerdict: refuted", "unparseable"),
+])
+def test_verdict_on_next_line(text, want):
+    from study.prompts import parse
+    assert parse(text, "closed_book")["parsed_verdict"] == want
+
+
+def test_probe_summary_reparses_saved_text():
+    from study.probe import _latest
+    rows = [{"claim_id": "c1", "model": "gemini", "run_index": 0, "condition": "closed_book",
+             "error": None, "parsed_verdict": "unparseable",
+             "response_text": "**Verdict:**\nrefuted\n\n**Reasoning:** x"}]
+    out = _latest(rows)
+    assert out[0]["parsed_verdict"] == "refuted"
+    assert out[0]["parsed_verdict_at_call"] == "unparseable"

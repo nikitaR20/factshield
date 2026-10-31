@@ -1,0 +1,19 @@
+# Claims whose gold label differs from the source rating after the label audits.
+# Claude took part in those audits (suggested overrides), so a Claude panel
+# member agreeing with these labels could be inflated. fourth_model.py reports
+# every result with and without these claims.
+#
+# Certain (Claude's 2026-10-28 audit suggested these): B-0036, B-0046, B-0051.
+# The others are all remaining label_overrides in study/config.yaml. Nikita:
+# remove any that came from your own reading alone, and add any later override.
+claims_Dataset_A-0002
+claims_Dataset_A-0004
+claims_Dataset_A-0006
+claims_Dataset_A-0007
+claims_Dataset_A-0008
+claims_Dataset_A-0044
+claims_Dataset_B-0006
+claims_Dataset_B-0016
+claims_Dataset_B-0036
+claims_Dataset_B-0046
+claims_Dataset_B-0051

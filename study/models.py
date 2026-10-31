@@ -333,6 +333,56 @@ async def _groq(cfg: dict, system: str, user: str, live: bool,
                 "total": u.get("total_tokens")}
 
 
+# ------------------------------------------------------------------ Anthropic
+
+async def _anthropic(cfg: dict, system: str, user: str, live: bool,
+                     client: httpx.AsyncClient, r: CallResult) -> None:
+    """Claude Messages API. Added 2026-10-31 for the exploratory fourth panel
+    model (fsv2/fourth_model.py); not one of `study_models`.
+
+    Claude Haiku 5.5 returns HTTP 400 for any non-default temperature, so its
+    config has temperature: null and none is sent (like Gemini here). Its
+    thinking is on by default; `thinking: disabled` turns it off at effort
+    `high` or below. Effort goes in `output_config.effort`.
+    """
+    key = env("ANTHROPIC_API_KEY")
+    if not key:
+        raise _Fatal("ANTHROPIC_API_KEY not set")
+    if live:
+        raise _Fatal("live search is not implemented for the anthropic provider")
+    body: dict[str, Any] = {
+        "model": cfg["model"],
+        "max_tokens": cfg["max_output_tokens"],
+        "system": system,
+        "messages": [{"role": "user", "content": user}],
+    }
+    if cfg.get("temperature") is not None:
+        body["temperature"] = cfg["temperature"]
+    if cfg.get("thinking") is not None:
+        body["thinking"] = {"type": cfg["thinking"]}
+    if cfg.get("effort") is not None:
+        body["output_config"] = {"effort": cfg["effort"]}
+    r.params_sent = {k: v for k, v in body.items() if k not in ("messages", "system")}
+    headers = {"x-api-key": key,
+               "anthropic-version": cfg.get("api_version") or "2023-06-01",
+               "content-type": "application/json"}
+    data = await _post_with_retry(client, "https://api.anthropic.com/v1/messages",
+                                  headers=headers, json=body, timeout=cfg["timeout_s"], result=r)
+    r.raw = data
+    r.model_version = data.get("model")
+    blocks = data.get("content") or []
+    text = [b.get("text", "") for b in blocks if b.get("type") == "text"]
+    thought = [b.get("thinking", "") for b in blocks
+               if b.get("type") == "thinking" and b.get("thinking")]
+    r.text = "".join(text) if text else None
+    r.reasoning_text = "".join(thought) if thought else None
+    r.finish_reason = data.get("stop_reason")
+    u = data.get("usage") or {}
+    inp, out = u.get("input_tokens"), u.get("output_tokens")
+    r.tokens = {"input": inp, "output": out, "reasoning": None,
+                "total": (inp or 0) + (out or 0) if (inp is not None or out is not None) else None}
+
+
 # ------------------------------------------------------------------ stub
 
 async def _stub(cfg: dict, system: str, user: str, live: bool,
@@ -377,7 +427,8 @@ async def _stub(cfg: dict, system: str, user: str, live: bool,
     r.latency_ms = r.latency_total_ms = 0.0
 
 
-_PROVIDERS = {"openai": _openai, "gemini": _gemini, "groq": _groq, "stub": _stub}
+_PROVIDERS = {"openai": _openai, "gemini": _gemini, "groq": _groq,
+              "anthropic": _anthropic, "stub": _stub}
 
 
 # ------------------------------------------------------------------ entry

@@ -50,12 +50,27 @@ def binom_sf(k: int, n: int, p: float) -> float:
 
 
 def _latest(rows: list[dict]) -> list[dict]:
-    """Last successful row per key."""
+    """Last successful row per key, re-parsed with the CURRENT parser.
+
+    The verdict stored at call time used the parser of that day; summaries
+    re-read the saved response text so a parser fix (parser-v4, 2026-10-29)
+    applies to every row alike. The stored verdict is kept as
+    parsed_verdict_at_call."""
+    from .prompts import PARSER_VERSION, parse
     best = {}
     for r in rows:
         if r.get("error") is None:
             best[(r["claim_id"], r["model"], r["run_index"])] = r
-    return list(best.values())
+    out = []
+    for r in best.values():
+        if "response_text" not in r:  # nothing saved to re-read (e.g. test rows)
+            out.append(r)
+            continue
+        p = parse(r.get("response_text"), r.get("condition") or "closed_book")
+        out.append({**r, "parsed_verdict_at_call": r.get("parsed_verdict"),
+                    "parsed_verdict": p["parsed_verdict"], "parse_rule": p["parse_rule"],
+                    "parser_version": PARSER_VERSION})
+    return out
 
 
 # ------------------------------------------------------------------ closed book
