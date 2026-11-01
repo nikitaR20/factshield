@@ -1,0 +1,187 @@
+gold: C:\Users\nikit\Downloads\factshield\factshield\study\claims + 11 label overrides  ({'refuted': 17, 'not_enough_evidence': 51, 'supported': 32})
+parser: parser-v4
+claims: 100
+
+=== Overstatement by condition: all (51 NEE-gold claims) ===
+condition                           OS  OS-S  OS-R  OS rate   US  WD  correct  unp
+plain format openai r0               9     3     6    0.176    5   1       85    0  n=100
+plain format openai r1               8     3     5    0.157    5   1       86    0  n=100
+plain free openai r0                12    10     2    0.235    4   4       80    0  n=100
+plain free openai r1                12    10     2    0.235    4   2       82    0  n=100
+plain citation openai r0            16    11     5    0.314    5   3       76    0  n=100
+plain citation openai r1            15    11     4    0.294    6   3       76    0  n=100
+plain format claude r0              14     5     9    0.275    0   0       86    0  n=100
+plain format claude r1              15     6     9    0.294    2   1       82    0  n=100
+plain free claude r0                20     6    14    0.392    1   3       73    3  n=100
+plain free claude r1                19     5    14    0.373    1   3       75    2  n=100
+plain citation claude r0            23     8    15    0.451    0   4       73    0  n=100
+plain citation claude r1            22     8    14    0.431    1   3       73    1  n=100
+v2 single openai                     7     6     1    0.137    9   1       83    0  n=100
+v2 single gemini                    13     7     6    0.255    4   1       82    0  n=100
+v2 single groq                      18    14     4    0.353    7   2       73    0  n=100
+v2 single claude                     7     3     4    0.137   14   2       77    0  n=100
+FactShield (unanimity + check)       5     4     1    0.098   11   1       83    0  n=100
+unanimity, no check                  5     4     1    0.098   11   1       83    0  n=100
+majority 2/3                         8     5     3    0.157    7   1       84    0  n=100
+plain format gemini r0              20     9    11    0.526    0   2       44    0  n=66  (partial)
+plain format gemini r1              18     8    10     0.45    0   2       54    0  n=74  (partial)
+plain free gemini r0                18     5    13    0.514    0   2       51    0  n=71  (partial)
+plain free gemini r1                16     8     8      0.5    0   1       47    0  n=64  (partial)
+plain citation gemini r0            18    10     8    0.562    0   0       54    0  n=72  (partial)
+plain citation gemini r1            17     9     8    0.459    0   1       58    0  n=76  (partial)
+
+=== Overstatement by condition: without 11 audited-label claims (43 NEE-gold claims) ===
+condition                           OS  OS-S  OS-R  OS rate   US  WD  correct  unp
+plain format openai r0               9     3     6    0.209    4   1       75    0  n=89
+plain format openai r1               8     3     5    0.186    4   1       76    0  n=89
+plain free openai r0                11     9     2    0.256    4   4       70    0  n=89
+plain free openai r1                12    10     2    0.279    4   2       71    0  n=89
+plain citation openai r0            15    11     4    0.349    4   3       67    0  n=89
+plain citation openai r1            14    11     3    0.326    5   3       67    0  n=89
+plain format claude r0              13     5     8    0.302    0   0       76    0  n=89
+plain format claude r1              14     6     8    0.326    2   1       72    0  n=89
+plain free claude r0                17     6    11    0.395    1   3       65    3  n=89
+plain free claude r1                16     5    11    0.372    1   3       67    2  n=89
+plain citation claude r0            21     8    13    0.488    0   4       64    0  n=89
+plain citation claude r1            20     8    12    0.465    1   3       64    1  n=89
+v2 single openai                     7     6     1    0.163    8   1       73    0  n=89
+v2 single gemini                    12     6     6    0.279    3   1       73    0  n=89
+v2 single groq                      18    14     4    0.419    6   2       63    0  n=89
+v2 single claude                     6     3     3     0.14   12   2       69    0  n=89
+FactShield (unanimity + check)       5     4     1    0.116   10   1       73    0  n=89
+unanimity, no check                  5     4     1    0.116   10   1       73    0  n=89
+majority 2/3                         8     5     3    0.186    6   1       74    0  n=89
+plain format gemini r0              19     9    10    0.594    0   2       38    0  n=59  (partial)
+plain format gemini r1              18     8    10      0.5    0   2       49    0  n=69  (partial)
+plain free gemini r0                16     5    11    0.552    0   2       44    0  n=62  (partial)
+plain free gemini r1                15     8     7    0.517    0   1       42    0  n=58  (partial)
+plain citation gemini r0            17    10     7    0.586    0   0       50    0  n=67  (partial)
+plain citation gemini r1            15     9     6      0.5    0   1       51    0  n=67  (partial)
+
+=== Run-to-run change in overstatement (plain, NEE claims) ===
+  format   openai  OS r0   9  r1   8  claims whose OS status changed 3
+  free     openai  OS r0  12  r1  12  claims whose OS status changed 2
+  citation openai  OS r0  16  r1  15  claims whose OS status changed 1
+  format   claude  OS r0  14  r1  15  claims whose OS status changed 7
+  free     claude  OS r0  20  r1  19  claims whose OS status changed 1
+  citation claude  OS r0  23  r1  22  claims whose OS status changed 1
+
+=== Q3 Output constraints [test] run 0, OS on NEE claims, exact McNemar, Holm over 4 ===
+(A_only = A overstates where B does not; costs: US = NEE on firm-gold claims, correct of 100)
+  citation vs free openai                  OS 16 vs 12  (A_only 5, B_only 1)  p 0.219  Holm 0.656  | US 5 vs 4  correct 76 vs 80
+  citation vs free claude                  OS 23 vs 20  (A_only 6, B_only 3)  p 0.508  Holm 0.906  | US 0 vs 1  correct 73 vs 73
+  format vs free openai                    OS  9 vs 12  (A_only 2, B_only 5)  p 0.453  Holm 0.906  | US 5 vs 4  correct 85 vs 80
+  format vs free claude                    OS 14 vs 20  (A_only 3, B_only 9)  p 0.146  Holm 0.584  | US 0 vs 1  correct 86 vs 73
+replication on run 1 [desc]:
+  citation vs free openai (r1)             OS 15 vs 12  (A_only 4, B_only 1)  p 0.375  | US 6 vs 4  correct 76 vs 82
+  citation vs free claude (r1)             OS 22 vs 19  (A_only 6, B_only 3)  p 0.508  | US 1 vs 1  correct 73 vs 75
+  format vs free openai (r1)               OS  8 vs 12  (A_only 2, B_only 6)  p 0.289  | US 5 vs 4  correct 86 vs 82
+  format vs free claude (r1)               OS 15 vs 19  (A_only 4, B_only 8)  p 0.388  | US 2 vs 1  correct 82 vs 75
+secondary [desc] (uncorrected p):
+  v2 single vs plain format openai         OS  7 vs  9  (A_only 2, B_only 4)  p 0.688  | US 9 vs 5  correct 83 vs 85
+  v2 single vs plain format claude         OS  7 vs 14  (A_only 1, B_only 8)  p 0.039  | US 14 vs 0  correct 77 vs 86
+  majority 2/3 vs v2 single openai         OS  8 vs  7  (A_only 3, B_only 2)  p 1.000  | US 7 vs 9  correct 84 vs 83
+  unanimity (no check) vs v2 single openai OS  5 vs  7  (A_only 0, B_only 2)  p 0.500  | US 11 vs 9  correct 83 vs 83
+  unanimity + check vs unanimity, no check OS  5 vs  5  (A_only 0, B_only 0)  p 1.000  | US 11 vs 11  correct 83 vs 83
+  FactShield vs plain format openai        OS  5 vs  9  (A_only 1, B_only 5)  p 0.219  | US 11 vs 5  correct 83 vs 85
+  FactShield vs plain format claude        OS  5 vs 14  (A_only 1, B_only 10)  p 0.012  | US 11 vs 0  correct 83 vs 86
+
+=== Q2 Evidence conditions ===
+NEE claims with packs: 51; os_share over 15 pooled system-runs; mean 0.284; claims with os_share 0: 13; >= 0.5: 13
+[test] Spearman rho(feature, os_share), permutation p (10,000), Holm over 7:
+  n_passages     n  51  rho  -0.03  p 0.8389  Holm 0.8389
+  n_orgs         n  51  rho   0.21  p 0.1384  Holm 0.6210
+  copy_share     n  51  rho  -0.22  p 0.1242  Holm 0.6210
+  attrib_share   n  51  rho  0.185  p 0.1902  Holm 0.6210
+  max_overlap    n  51  rho  0.402  p 0.0042  Holm 0.0294
+  mean_rating    n  50  rho  -0.28  p 0.0498  Holm 0.2988
+  dated_share    n  51  rho   -0.2  p 0.1577  Holm 0.6210
+set A vs B (outside Holm): mean os_share A 0.271 (n 30) vs B 0.302 (n 21); diff -0.03, permutation p 0.7477
+[desc] tertiles (NEE claims): mean os_share, and OS-S / OS-R instances
+  copy_share    cuts 0.25/0.625: low n 16 mean 0.32 S/R 39/38 | mid n 16 mean 0.31 S/R 26/48 | high n 19 mean 0.23 S/R 44/22
+  attrib_share  cuts 0.6/0.75: low n 17 mean 0.14 S/R 16/20 | mid n 10 mean 0.25 S/R 10/27 | high n 24 mean 0.40 S/R 83/61
+  max_overlap   cuts 0.667/0.833: low n 15 mean 0.14 S/R 7/24 | mid n 19 mean 0.28 S/R 48/33 | high n 17 mean 0.41 S/R 54/51
+
+=== Q1 Claims to code (NEE claims overstated by at least one non-Gemini-plain system) ===
+39 distinct claims; by number of system-runs that overstated:
+  claims_Dataset_A-0039    19 system-runs  S  0  R 19  pooled os_share 1.0  
+  claims_Dataset_A-0040    19 system-runs  S 19  R  0  pooled os_share 1.0  
+  claims_Dataset_B-0048    19 system-runs  S 19  R  0  pooled os_share 1.0  
+  claims_Dataset_B-0018    18 system-runs  S 18  R  0  pooled os_share 0.933  
+  claims_Dataset_A-0029    15 system-runs  S  0  R 15  pooled os_share 0.867  
+  claims_Dataset_B-0053    14 system-runs  S  6  R  8  pooled os_share 0.867  
+  claims_Dataset_B-0038    12 system-runs  S 12  R  0  pooled os_share 0.8  
+  claims_Dataset_A-0023    10 system-runs  S 10  R  0  pooled os_share 0.4  
+  claims_Dataset_B-0022    10 system-runs  S  0  R 10  pooled os_share 0.533  
+  claims_Dataset_A-0020     9 system-runs  S  3  R  6  pooled os_share 0.6  
+  claims_Dataset_B-0036     9 system-runs  S  2  R  7  pooled os_share 0.533  (audited label)
+  claims_Dataset_A-0022     8 system-runs  S  0  R  8  pooled os_share 0.533  
+  claims_Dataset_A-0027     8 system-runs  S  0  R  8  pooled os_share 0.533  
+  claims_Dataset_B-0047     8 system-runs  S  7  R  1  pooled os_share 0.533  
+  claims_Dataset_A-0028     7 system-runs  S  7  R  0  pooled os_share 0.467  
+  claims_Dataset_A-0021     6 system-runs  S  0  R  6  pooled os_share 0.4  
+  claims_Dataset_A-0032     6 system-runs  S  6  R  0  pooled os_share 0.4  
+  claims_Dataset_A-0035     6 system-runs  S  5  R  1  pooled os_share 0.333  
+  claims_Dataset_A-0036     5 system-runs  S  5  R  0  pooled os_share 0.333  
+  claims_Dataset_B-0008     5 system-runs  S  1  R  4  pooled os_share 0.333  
+  claims_Dataset_A-0030     4 system-runs  S  0  R  4  pooled os_share 0.267  
+  claims_Dataset_B-0013     4 system-runs  S  0  R  4  pooled os_share 0.267  
+  claims_Dataset_A-0026     3 system-runs  S  0  R  3  pooled os_share 0.133  
+  claims_Dataset_A-0043     3 system-runs  S  3  R  0  pooled os_share 0.067  
+  claims_Dataset_A-0002     2 system-runs  S  0  R  2  pooled os_share 0.133  (audited label)
+  claims_Dataset_A-0006     2 system-runs  S  0  R  2  pooled os_share 0.133  (audited label)
+  claims_Dataset_A-0008     2 system-runs  S  0  R  2  pooled os_share 0.133  (audited label)
+  claims_Dataset_A-0045     2 system-runs  S  0  R  2  pooled os_share 0.133  
+  claims_Dataset_B-0033     2 system-runs  S  0  R  2  pooled os_share 0.133  
+  claims_Dataset_B-0039     2 system-runs  S  2  R  0  pooled os_share 0.133  
+  claims_Dataset_A-0007     1 system-runs  S  0  R  1  pooled os_share 0.067  (audited label)
+  claims_Dataset_A-0025     1 system-runs  S  1  R  0  pooled os_share 0.067  
+  claims_Dataset_A-0033     1 system-runs  S  1  R  0  pooled os_share 0.067  
+  claims_Dataset_A-0038     1 system-runs  S  0  R  1  pooled os_share 0.067  
+  claims_Dataset_B-0001     1 system-runs  S  1  R  0  pooled os_share 0.0  
+  claims_Dataset_B-0015     1 system-runs  S  0  R  1  pooled os_share 0.067  
+  claims_Dataset_B-0016     1 system-runs  S  0  R  1  pooled os_share 0.067  (audited label)
+  claims_Dataset_B-0043     1 system-runs  S  1  R  0  pooled os_share 0.067  
+  claims_Dataset_B-0055     1 system-runs  S  0  R  1  pooled os_share 0.067  
+
+=== Q1 Kinds: codes from study/results/overstatement_coding.csv: CHECKED ===
+check: 39 of 39 claims have FINAL_code; draft primary code kept on 33, changed on 6 (85% agreement on the primary code); NIKITA_check column: {'disagree': 6, 'agree': 33}
+  changed claims_Dataset_A-0039: L -> S
+  changed claims_Dataset_A-0040: A -> E
+  changed claims_Dataset_B-0018: L -> A
+  changed claims_Dataset_B-0053: O -> L
+  changed claims_Dataset_B-0022: N -> A
+  changed claims_Dataset_B-0055: L -> N
+primary code by claim: A 14, N 12, S 3, E 3, L 3, M 2, O 1, I 1
+by system-run instance (248 OS instances across all non-Gemini-plain conditions):
+  A: 109 (44%)  as supported 69, as refuted 40
+  N: 38 (15%)  as supported 2, as refuted 36
+  E: 34 (14%)  as supported 34, as refuted 0
+  S: 29 (12%)  as supported 9, as refuted 20
+  L: 23 (9%)  as supported 6, as refuted 17
+  M: 9 (4%)  as supported 8, as refuted 1
+  O: 5 (2%)  as supported 1, as refuted 4
+  I: 1 (0%)  as supported 0, as refuted 1
+instances by family x model x code [desc]:
+  plain reason-first (format)            openai  runs 2: A 7, S 3, L 3, E 2, N 2
+  plain reason-first (format)            claude  runs 2: A 15, N 7, L 3, S 2, E 2
+  plain verdict-first (free+citation)    openai  runs 4: A 26, S 10, E 8, L 4, M 4, N 3
+  plain verdict-first (free+citation)    claude  runs 4: A 32, N 24, L 10, E 8, S 6, O 4
+  FactShield-prompt singles              openai  runs 1: A 3, S 2, E 2
+  FactShield-prompt singles              claude  runs 1: A 3, S 1, E 1, L 1, I 1
+  FactShield-prompt singles              gemini  runs 1: A 5, E 2, L 2, M 2, S 1, N 1
+  FactShield-prompt singles              groq    runs 1: A 10, E 3, M 2, S 1, O 1, N 1
+  panel filters                          panel   runs 3: A 8, E 6, S 3, M 1
+self-source (only support is the subject's own statement): {'n': 32, 'y': 4, 'partly': 3}
+L-coded (label arguable) claims: 3 of 39 (not more than a third)
+sensitivity without L-coded claims: primary Q3 contrasts
+  citation vs free openai (no L)           OS 15 vs 11  (A_only 5, B_only 1)  p 0.219  | US 5 vs 4  correct 74 vs 78
+  citation vs free claude (no L)           OS 21 vs 17  (A_only 6, B_only 2)  p 0.289  | US 0 vs 1  correct 72 vs 73
+  format vs free openai (no L)             OS  8 vs 11  (A_only 2, B_only 5)  p 0.453  | US 5 vs 4  correct 83 vs 78
+  format vs free claude (no L)             OS 13 vs 17  (A_only 3, B_only 7)  p 0.344  | US 0 vs 1  correct 84 vs 73
+sensitivity without L-coded claims: rho(max_overlap, os_share) 0.372, p 0.0083 (n 48)
+sensitivity without audited-label claims: rho(max_overlap, os_share) 0.346, p 0.0220 (n 43)
+[desc] mean max_overlap by code: A 0.81 (n 14), E 0.79 (n 3), I 0.50 (n 1), L 0.78 (n 3), M 0.48 (n 2), N 0.68 (n 12), O 0.92 (n 1), S 0.83 (n 3), never overstated 0.62 (n 12)
+coding sheet not rewritten: study/results/overstatement_coding.csv is also the --codes input (your checks are kept)
+
+summary JSON: study/results/overstatement_summary.json

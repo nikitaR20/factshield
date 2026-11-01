@@ -1,0 +1,14 @@
+Check whether the claim below is true. Search the web before you answer, and base your verdict on what reliable sources say. Today's date is {date}.
+
+Choose one verdict:
+- supported: the sources you found establish that the claim is true.
+- refuted: the sources you found establish that the claim is false.
+- not_enough_evidence: the sources you found do not settle it.
+
+Reply with one JSON object and nothing else, in exactly this shape:
+{"verdict": "supported|refuted|not_enough_evidence", "sources": ["https://..."], "reason": "one sentence"}
+
+"sources" lists the pages your verdict relies on (at most 5).
+
+CLAIM:
+{claim}
