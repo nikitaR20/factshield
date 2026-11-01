@@ -11,6 +11,8 @@ import hashlib
 import json
 import os
 import subprocess
+import sys
+from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -24,13 +26,39 @@ REPO_ROOT = STUDY_DIR.parent
 CONFIG_PATH = STUDY_DIR / "config.yaml"
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """SafeLoader that rejects a key repeated in one mapping.
+
+    Plain YAML keeps the LAST of two equal keys without a word. In this
+    project that silently emptied the pack exclusions: `exclude_channels:
+    [prior_check]` was added above an older `exclude_channels: []`, and the
+    empty one won. A method setting must never be overridden invisibly.
+    """
+
+
+def _no_duplicates(loader, node, deep=False):
+    seen = {}
+    for key_node, _ in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in seen:
+            raise ValueError(
+                f"config: key {key!r} appears twice (lines {seen[key] + 1} and "
+                f"{key_node.start_mark.line + 1}). YAML would silently keep the second; "
+                f"delete one.")
+        seen[key] = key_node.start_mark.line
+    return loader.construct_mapping(node, deep=deep)
+
+
+_StrictLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _no_duplicates)
+
+
 @functools.lru_cache(maxsize=None)
 def config(path: str | None = None) -> dict:
     """study/config.yaml, or the file named by STUDY_CONFIG (for dry runs
     against fixtures; the real study always uses the committed file)."""
     p = Path(path or os.environ.get("STUDY_CONFIG") or CONFIG_PATH)
-    with p.open() as fh:
-        cfg = yaml.safe_load(fh)
+    with p.open(encoding="utf-8") as fh:
+        cfg = yaml.load(fh, Loader=_StrictLoader)
     cfg["_config_file"] = str(p)
     return cfg
 
@@ -42,6 +70,8 @@ def resolve(rel: str) -> Path:
 
 
 def path(key: str) -> Path:
+    if key == "claims" and os.environ.get("STUDY_CLAIMS_DIR"):
+        return resolve(os.environ["STUDY_CLAIMS_DIR"])
     return resolve(config()["paths"][key])
 
 
@@ -70,6 +100,8 @@ def provenance() -> dict[str, Any]:
     prov = {"seed": config()["seed"], "git_commit": git_commit()}
     if config()["_config_file"] != str(CONFIG_PATH):
         prov["config_file"] = config()["_config_file"]   # a non-default config is never silent
+    if os.environ.get("STUDY_CLAIMS_DIR"):
+        prov["claims_dir"] = os.environ["STUDY_CLAIMS_DIR"]
     return prov
 
 
@@ -92,7 +124,7 @@ def read_jsonl(p: Path) -> list[dict]:
     if not p.exists():
         return []
     rows = []
-    with p.open() as fh:
+    with p.open(encoding="utf-8") as fh:
         for n, line in enumerate(fh, 1):
             line = line.strip()
             if not line:
@@ -159,11 +191,48 @@ REQUIRED_CLAIM_FIELDS = ("id", "claim", "set", "label", "domain", "source_id")
 GOLD_LABELS = ("supported", "refuted", "not_enough_evidence")
 
 
+_reported_exclusions = False
+
+
+def _apply_label_overrides(claims: list[dict]) -> None:
+    """Replace a gold label by a pack-relative one, keeping the original."""
+    ov = ((config().get("claims") or {}).get("csv") or {}).get("label_overrides") or {}
+    ids = {c["id"] for c in claims}
+    unknown = set(ov) - ids
+    if unknown and claims:
+        print(f"[study] label_overrides name claims that are not loaded: {sorted(unknown)}",
+              file=sys.stderr)
+    for c in claims:
+        o = ov.get(c["id"])
+        if not o:
+            continue
+        if o.get("label") not in GOLD_LABELS or not o.get("reason"):
+            raise ValueError(f"label_overrides[{c['id']}] needs label in {GOLD_LABELS} and a reason")
+        c["label_original"] = c["label"]
+        c["label"] = o["label"]
+        c["label_override_reason"] = o["reason"]
+
+
 def load_claims(paths: Iterable[Path] | None = None) -> list[dict]:
-    if paths is None:
-        paths = sorted(path("claims").glob("*.jsonl"))
+    """All claims from the claims folder: *.jsonl as-is, *.csv/*.tsv through
+    study.claimsets (rows it cannot label are excluded and counted)."""
+    global _reported_exclusions
     claims: list[dict] = []
-    seen: set[str] = set()
+    if paths is None:
+        folder = path("claims")
+        paths = sorted(folder.glob("*.jsonl"))
+        from .claimsets import csv_files, load_csv_claims
+        if folder.is_dir() and csv_files(folder):
+            csv_claims, excluded = load_csv_claims(folder)
+            claims.extend(csv_claims)
+            if excluded and not _reported_exclusions:
+                _reported_exclusions = True
+                print(f"[study] {len(csv_claims)} CSV claims loaded, {len(excluded)} rows excluded "
+                      f"(see `python -m study.claimsets check`)", file=sys.stderr)
+    seen: set[str] = {c["id"] for c in claims}
+    if len(seen) != len(claims):
+        dup = [k for k, v in Counter(c["id"] for c in claims).items() if v > 1]
+        raise ValueError(f"duplicate claim ids in CSV files: {dup[:10]}")
     for p in paths:
         for row in read_jsonl(Path(p)):
             missing = [f for f in REQUIRED_CLAIM_FIELDS if f not in row]
@@ -176,6 +245,7 @@ def load_claims(paths: Iterable[Path] | None = None) -> list[dict]:
                 raise ValueError(f"duplicate claim id {row['id']}")
             seen.add(row["id"])
             claims.append(row)
+    _apply_label_overrides(claims)
     return claims
 
 

@@ -79,9 +79,15 @@ def build(condition: str, claim: str, pack: dict | None) -> tuple[str, str, dict
 
 _MD = re.compile(r"[*_`#>]")
 _BRACKET_CITE = re.compile(r"\[[^\]]*\]")
-_VERDICT_LINE = re.compile(r"^\s*verdict\s*[:\-–]\s*(.+?)\s*$", re.I | re.M)
-_CONF_LINE = re.compile(r"^\s*confidence\s*[:\-–]\s*(.+?)\s*$", re.I | re.M)
-_REASON_LINE = re.compile(r"^\s*reasoning\s*[:\-–]", re.I | re.M)
+# Field labels may be wrapped in markdown: "**Verdict:** x", "**Verdict: x**",
+# "## Verdict - x", "> Verdict: x". Only the formatting around the label is
+# tolerated; the label word itself must be there. (Pilot, 2026-10-22: a
+# gpt-oss answer ending "**Verdict: not enough evidence**." was unparseable.)
+_FMT = r"[\s*_#>`]*"
+PARSER_VERSION = "parser-v4"
+_VERDICT_LINE = re.compile(rf"^{_FMT}verdict{_FMT}[:\-–][ \t]*(.*?)[ \t]*$", re.I | re.M)
+_CONF_LINE = re.compile(rf"^{_FMT}confidence{_FMT}[:\-–]\s*(.+?)\s*$", re.I | re.M)
+_REASON_LINE = re.compile(rf"^{_FMT}reasoning{_FMT}[:\-–]", re.I | re.M)
 _NEI = re.compile(r"\bnot\s+enough\s+evidence\b")
 _LABEL = re.compile(r"\b(supported|refuted)\b")
 # A label word with a qualifier in front is a different claim ("not supported",
@@ -111,6 +117,22 @@ def label_in(fragment: str) -> str | None:
     return found.pop() if len(found) == 1 else None
 
 
+def _verdict_fragments(text: str) -> list[str]:
+    """The text after each `Verdict:` heading. parser-v4 (2026-10-29): when the
+    heading line holds no words (Gemini 3.5 Flash-Lite writes "**Verdict:**"
+    and puts the label on the NEXT line), the next non-empty line is used.
+    v3 recorded those answers as unparseable (65 of 189 closed-book Gemini
+    answers on 2026-10-29)."""
+    frags = []
+    for m in _VERDICT_LINE.finditer(text):
+        frag = m.group(1)
+        if not _clean(frag).strip(" :.-"):
+            rest = text[m.end():]
+            frag = next((ln for ln in rest.splitlines() if ln.strip()), "")
+        frags.append(frag)
+    return frags
+
+
 def parse(text: str | None, condition: str) -> dict:
     """Parse a response into a verdict or `unparseable`. Never guesses.
 
@@ -133,7 +155,7 @@ def parse(text: str | None, condition: str) -> dict:
     out["cited_ids"] = cited_ids(text)
     out["cited_urls"] = cited_urls(text)
 
-    vlines = _VERDICT_LINE.findall(text)
+    vlines = _verdict_fragments(text)
     if vlines:
         labs = {label_in(v) for v in vlines}
         if len(labs) == 1 and None not in labs:
@@ -145,10 +167,16 @@ def parse(text: str | None, condition: str) -> dict:
         out["parse_rule"] = "format_missing_verdict_line"
     else:
         first = next((ln for ln in text.splitlines() if ln.strip()), "")
-        lab = label_in(first)
+        # The opening statement decides. Check the first SENTENCE before the
+        # whole first line: a one-paragraph answer ("The claim is refuted. ...
+        # the claim is not supported by the evidence.") otherwise mixes the
+        # verdict with later wording. (Pilot, 2026-10-22, 0001 citation.)
+        sentence = re.split(r"(?<=[.!?])\s+", first.strip(), maxsplit=1)[0]
+        lab_s = label_in(sentence) if sentence != first.strip() else None
+        lab = lab_s or label_in(first)
         if lab:
             out["parsed_verdict"] = lab
-            out["parse_rule"] = "first_line"
+            out["parse_rule"] = "first_sentence" if lab_s else "first_line"
         else:
             out["parse_rule"] = "first_line_no_single_label"
 

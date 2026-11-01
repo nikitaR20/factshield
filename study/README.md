@@ -17,9 +17,16 @@ and stays separate.
 ```bash
 pip install -r backend/requirements.txt -r study/requirements.txt
 # 1. fill model ids in study/config.yaml (they are CHANGE_ME on purpose)
-# 2. put claim sets in study/claims/*.jsonl (see study/claims/README.md)
+# 2. put claim CSVs in study/claims/ (or set paths.claims / STUDY_CLAIMS_DIR)
+python -m study.claimsets check          # rating -> label mapping, exclusions
+#    decide unmapped ratings and packs.exclude_channels in config.yaml NOW
 python -m study.packs build              # retrieve once, freeze, hash
 python -m study.packs verify
+python -m study.packs summary            # pack sizes per gold label, channels, domains
+python -m study.packs audit              # spreadsheet: every passage beside claim + gold label
+python -m study.packs reprocess          # re-apply changed rules to saved search results (no credits)
+#    remove pages by hand via packs.exclude_urls; rebuild only affected packs:
+#    python -m study.packs build --rebuild id1,id2   (after deleting those pack files)
 #    audit gold labels against the frozen packs before going further
 python -m study.probe closed-book        # what each model knows unaided
 python -m study.probe leak-check         # is anything retrieving server-side?
@@ -39,6 +46,7 @@ python -m pytest study/tests -q
 | `common.py` | Config, provenance (seed + git commit on every output), fsynced JSONL |
 | `models.py` | One `complete()` for all providers; search off and evidenced; served model version; backoff |
 | `prompts.py` + `prompts/*.v1.txt` | Condition text as files, condition builder, conservative verdict parser |
+| `claimsets.py` | Reads CSV/TSV claim tables; maps `rate` to gold labels via config; `check` report |
 | `packs.py` | Frozen evidence packs via `app.retrieval`, manifest of hashes |
 | `probe.py` | Closed-book probe (`knew_unaided`) and search-leak check |
 | `run.py` | Shuffled, resumable main runner; `--repeat`; labelled `--live-search` |
@@ -60,6 +68,30 @@ python -m pytest study/tests -q
   hand-written `search_concepts` for PubMed. Each passage records PubMed's
   `key_findings` and whether they survived truncation to
   `max_chars_per_passage`; packs where they did not get a warning.
+- **CSV fact-check tables.** The gold label comes from the fact-checker's
+  rating through a published table; unclear ratings are excluded. Such
+  claims often retrieve their own fact-check (the `prior_check` channel
+  returns the rating verbatim). Packs warn `contains_factcheck_verdict`;
+  `packs.exclude_channels` / `exclude_domains` remove those documents before
+  freezing. Because FactShield fetches only 3 results per channel, excluded
+  sites could use up every slot; `packs.fetch_per_channel` makes the study
+  call the same app.retrieval channels with a larger limit and exclude after
+  fetching (null restores the product's retrieve()). URL patterns catch
+  fact-check desks on news sites (`exclude_url_patterns`); pages judged by hand
+  go in `exclude_urls`. The config loader refuses a repeated key, because YAML
+  would otherwise keep the last one silently. One claim per source makes the source and claim intercepts the
+  same, so the mixed model keeps one.
+- **Passage rules** (`study/passages.py`, `packs.processing`). Each page is
+  cleaned of menus and boilerplate, cut to the sentences most about the claim,
+  and dropped if it attributes a finding to a named fact-checker, is off-topic
+  (shares under 15% of the claim's content words; kept lenient because word
+  overlap misses paraphrase) or near-duplicates a kept passage. Every removal
+  is recorded with its reason. Raw search results are saved in `packs_raw/`,
+  so rules can change without new searches (`packs reprocess`, which moves the
+  old packs aside instead of deleting them).
+- **Pack-relative gold labels.** Where a pack cannot settle its claim, the
+  label is overridden in `claims.csv.label_overrides` with a reason; the
+  fact-checker's rating stays in `label_original` and `factcheck_rating`.
 - **Mixed-model fit.** statsmodels' binomial mixed model is Bayesian. Its
   variational fit under-covered badly on synthetic data (69–76% for nominal
   95%, and a true null called non-zero 25–31% of the time); the Laplace fit

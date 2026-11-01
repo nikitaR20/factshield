@@ -1,5 +1,32 @@
 # Claim sets
 
+## CSV files (fact-check tables)
+
+Put `.csv` or `.tsv` files in this folder, or point `paths.claims` in
+`study/config.yaml` (or the `STUDY_CLAIMS_DIR` environment variable) at any
+folder on your computer. Expected columns:
+
+    question  comment  claim  rate  what's true  what's false  what's unknown  origin  summary
+
+- `claim` is the text the models see. Nothing else is shown to a model.
+- `rate` becomes the gold label through `claims.csv.rating_to_label` in
+  config. Ratings that are not clearly supported / refuted / not enough
+  evidence are excluded and counted, never guessed.
+- The other columns are kept under `factcheck` for auditing labels and for
+  human coders.
+- Ids are `<file name>-<row number>` unless there is an `id` column. Do not
+  reorder or delete rows after building packs: the runner will refuse any
+  claim whose pack was built for different text.
+
+Check before building anything:
+
+    python -m study.claimsets check
+
+It prints every `rate` value found and what it became, claims kept per set
+and label, and every excluded row's reason.
+
+## JSON-lines files
+
 Frozen inputs to the study. One JSON object per line, in `*.jsonl` files here.
 These ARE version-controlled (`.gitignore` un-ignores `study/claims/*.jsonl`);
 any change after the pilot is a protocol deviation.

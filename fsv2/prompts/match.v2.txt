@@ -1,0 +1,9 @@
+Below is a claim and the published fact-checks that a search returned. For each fact-check, decide whether it reviewed the SAME claim: the same assertion about the same people, event, place and time. A fact-check of a similar, older or related claim is NOT the same claim.
+
+Reply with one JSON object and nothing else: {"same": [the numbers of the fact-checks that reviewed the same claim]}
+
+CLAIM:
+{claim}
+
+FACT-CHECKS:
+{items}

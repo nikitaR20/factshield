@@ -1,0 +1,60 @@
+# FactShield v2 — thesis-core configuration.
+#
+# Every number here was fixed on 2026-10-25, BEFORE any v2 run on dev or test.
+# Changing one after the dev run is a protocol deviation and must be reported.
+
+version: fsv2-0.2
+
+# The panel is the same three models as the study comparison. Names, max
+# tokens, timeouts and reasoning settings are read from study/config.yaml
+# (models.<key>), so the panel can never drift from the comparison models.
+panel: [openai, gemini, groq]
+
+# Round 1 uses each model's study temperature (0 in study/config.yaml), so the
+# first verdict is produced under the comparison's own settings. Only when the
+# three disagree are extra samples drawn, and those need randomness.
+extra_samples_per_model: 2
+extra_sample_temperature: 0.7
+
+# Writes the explanation after the verdict is fixed. Assumed fastest of the
+# three (Groq); change if your measurements say otherwise.
+explainer: groq
+
+# v1: fixed 2026-10-25, used for the first dev run.
+# v2 (2026-10-26): the ONE change made from dev failures. Adds to the
+# `refuted` definition that "no evidence for / not shown" is not refutation.
+# Found on dev claim B-0022, where all three models refuted a claim because
+# researchers "found no evidence" it was true. Explain prompt unchanged.
+prompt_version: v2
+
+evidence:
+  # Two passages from different URLs whose 5-word shingles overlap at least
+  # this much are treated as one text shown once (packs already removed
+  # pairs >= 0.8 within a pack).
+  near_duplicate_jaccard: 0.5
+  shingle_words: 5
+
+checker:
+  # MiniCheck-Flan-T5-Large (Tang et al., EMNLP 2024), official package.
+  # 0.5 is the package's own decision threshold.
+  model: flan-t5-large
+  threshold: 0.5
+  chunk_size: null        # package default (500 words for flan-t5-large)
+
+live:
+  # The browser demo (fsv2/api.py). The thesis runs never use this section.
+  word_cap: 800
+  max_claims_per_check: 3
+  max_search_rounds: 2          # round 2 only when round 1 ends "not enough evidence"
+  results_per_search: 8         # Tavily results per search channel, as for the packs
+  max_passages: 8               # as for the packs
+  max_factcheck_passages: 2     # same-claim fact-checks kept as passages
+  max_chars_per_passage: 1500   # as for the packs
+  helper_model: openai          # claim extraction + "same claim?" check
+  explain: true
+
+explanation:
+  max_sentences: 4
+  # If fewer than this share of factual sentences survive the check, show
+  # the verdict with its quotes only.
+  min_surviving_share: 0.5

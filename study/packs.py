@@ -37,6 +37,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import stat
 from collections import Counter
 from pathlib import Path
@@ -44,7 +45,7 @@ from typing import Awaitable, Callable
 
 from app.config import env, pack_for
 
-from .common import (DurableAppender, config, load_claims, now_iso, path,
+from .common import (DurableAppender, config, load_claims, now_iso, path, write_json,
                      provenance, read_jsonl, sha256_json)
 
 Retriever = Callable[..., Awaitable[list]]   # (claim, category, jurisdiction, concepts=None)
@@ -100,25 +101,136 @@ def _flags(claim: dict, passages: list[dict], attempted: dict) -> list[str]:
     return flags
 
 
+_LAST_FANOUT: dict = {}
+
+
+def _canon(url: str) -> str:
+    from urllib.parse import urlparse
+    u = urlparse(str(url))
+    return f"{u.netloc.lower().removeprefix('www.')}{u.path.rstrip('/')}"
+
+
 async def _default_retriever(claim: str, category: str, jurisdiction: str | None,
                              concepts: list[list[str]] | None = None) -> list:
-    from app.retrieval import retrieve
-    return await retrieve(claim, category, jurisdiction, concepts=concepts)
+    """Retrieve through app.retrieval.
+
+    fetch_per_channel null: `retrieve()` unchanged, as the product calls it.
+    Otherwise: the same channels `retrieve()` uses (the category's adapters,
+    domain_search, open_web if the category enables it), each asked for
+    `fetch_per_channel` results. A channel listed in exclude_channels is not
+    called at all. Deny-listed domains and duplicate URLs are removed exactly
+    as retrieve() does. What each channel returned or raised is recorded,
+    because retrieve() swallows failures and an empty pack needs a reason.
+    """
+    import asyncio
+
+    from app import retrieval as R
+
+    cfg = config()["packs"]
+    n = cfg.get("fetch_per_channel")
+    _LAST_FANOUT.clear()
+    if not n:
+        _LAST_FANOUT.update({"mode": "app.retrieval.retrieve"})
+        return await R.retrieve(claim, category, jurisdiction, concepts=concepts)
+
+    skip = set(cfg.get("exclude_channels") or [])
+    pk = pack_for(category, jurisdiction)
+    calls: dict[str, object] = {}
+    for name in pk.get("adapters", ["factcheck"]):
+        fn = R.ADAPTERS.get(name)
+        # The factcheck adapter IS the prior_check channel.
+        if fn is None or (name == "factcheck" and "prior_check" in skip):
+            continue
+        calls[name] = fn(claim, limit=n, category=category, jurisdiction=jurisdiction,
+                         concepts=concepts)
+    if "authority" not in skip:
+        calls["domain_search"] = R.domain_search(claim, n, category=category,
+                                                 jurisdiction=jurisdiction)
+    if pk.get("use_open_web", True) and "open_web" not in skip:
+        calls["open_web"] = R.open_web(claim, n)
+
+    results = await asyncio.gather(*calls.values(), return_exceptions=True)
+    docs, seen, per = [], set(), {}
+    for name, res in zip(calls, results):
+        if isinstance(res, Exception):
+            per[name] = f"error: {type(res).__name__}: {res}"[:200]
+            continue
+        per[name] = len(res)
+        for d in res:
+            if R.DENY_DOMAINS and any(
+                    d.source_domain.lower().removeprefix("www.") == x
+                    or d.source_domain.lower().endswith("." + x) for x in R.DENY_DOMAINS):
+                continue
+            key = _canon(d.url)
+            if key in seen:
+                continue
+            seen.add(key)
+            docs.append(d)
+    _LAST_FANOUT.update({"mode": "study_fanout", "fetch_per_channel": n,
+                         "channels_called": list(calls), "returned_per_channel": per})
+    return docs
 
 
-async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
+def exclusion_reason(d: dict) -> str | None:
+    """Why config removes this document from a pack, or None to keep it."""
+    cfg = config()["packs"]
+    dom = (d.get("source_domain") or "").lower().removeprefix("www.")
+    url = str(d.get("url") or "")
+    if d.get("channel") in set(cfg.get("exclude_channels") or []):
+        return f"channel {d.get('channel')}"
+    for x in cfg.get("exclude_domains") or []:
+        x = x.lower().removeprefix("www.")
+        if dom == x or dom.endswith("." + x):
+            return f"domain {x}"
+    for pat in cfg.get("exclude_url_patterns") or []:
+        if pat.lower() in url.lower():
+            return f"url contains {pat!r}"
+    if _canon(url) in {_canon(u) for u in cfg.get("exclude_urls") or []}:
+        return "url listed in exclude_urls"
+    return None
+
+
+def raw_path(claim_id: str) -> Path:
+    """Raw search results live beside the packs folder (packs_raw/), so
+    deleting the packs to rebuild them does not delete what was fetched."""
+    return path("packs").parent / (path("packs").name + "_raw") / f"{claim_id}.json"
+
+
+async def build_pack(claim: dict, retriever: Retriever | None = None,
+                     from_raw: bool = False) -> dict:
     cfg = config()["packs"]
     category = category_for(claim.get("domain", ""))
     attempted = _attempted_channels(category)
     concepts = claim.get("search_concepts") or None
-    docs = await (retriever or _default_retriever)(claim["claim"], category, None,
-                                                    concepts=concepts)
+    raw = raw_path(claim["id"])
+    if from_raw and raw.exists():
+        cached = json.loads(raw.read_text(encoding="utf-8"))
+        if cached["claim"] != claim["claim"]:
+            raise PackError(f"{raw} was saved for different claim text; delete it to search again")
+        docs, fanout_used = cached["docs"], {**cached.get("fanout", {}), "from_raw_cache": True}
+    else:
+        docs = await (retriever or _default_retriever)(claim["claim"], category, None,
+                                                        concepts=concepts)
+        docs = [d.model_dump(mode="json") if hasattr(d, "model_dump") else dict(d) for d in docs]
+        fanout_used = dict(_LAST_FANOUT) if retriever is None else {"mode": "injected"}
+        # Everything the search returned, before any rule. Reprocessing with new
+        # rules (`build --from-raw`) then costs no search credits.
+        write_json(raw, {"claim_id": claim["id"], "claim": claim["claim"], "saved_at": now_iso(),
+                         "fanout": fanout_used, "docs": docs, **provenance()})
 
     passages = []
+    n_returned = len(docs)
+    removed = [{"url": str(d.get("url")), "channel": d.get("channel"),
+                "source_domain": d.get("source_domain"), "because": exclusion_reason(d)}
+               for d in docs if exclusion_reason(d)]
+    docs = [d for d in docs if not exclusion_reason(d)]
+    from .passages import VERSION as PROC_VERSION
+    from .passages import process
+    docs, dropped = process(claim["claim"], docs, cfg["max_chars_per_passage"])
+    removed += dropped
     for i, d in enumerate(docs[: cfg["max_passages"]], 1):
-        d = d.model_dump(mode="json") if hasattr(d, "model_dump") else dict(d)
         text = d.get("text") or ""
-        kept = text[: cfg["max_chars_per_passage"]]
+        kept = d["shown_text"]
         findings = d.get("key_findings")
         passages.append({
             "pid": f"P{i}",
@@ -130,6 +242,8 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
             "text": kept,
             "text_truncated": len(text) > cfg["max_chars_per_passage"],
             "text_chars_original": len(text),
+            "boilerplate_lines_removed": d.get("lines_removed", 0),
+            "claim_overlap": d.get("claim_overlap"),
             # Not shown to the model; recorded so truncation loss is measurable.
             "key_findings": findings,
             "key_findings_in_text": (findings.strip() in kept) if findings else None,
@@ -143,10 +257,13 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
         **provenance(),
         "retrieval": {
             **attempted,
-            "n_docs_returned": len(docs),
+            "n_docs_returned": n_returned,
+            "excluded_by_config": removed,
+            "processing": {"version": PROC_VERSION, **(cfg.get("processing") or {})},
             "n_docs_kept": len(passages),
             "docs_per_channel": dict(Counter(p["channel"] for p in passages)),
             "search_concepts": concepts,
+            "fanout": fanout_used,
         },
         # Per-provider retrievability of the claim's SOURCE, as recorded in the
         # claim set. The pack cannot measure this itself: it would need each
@@ -158,6 +275,19 @@ async def build_pack(claim: dict, retriever: Retriever | None = None) -> dict:
     # Warnings are reported but do not exclude the claim (flags do).
     lost = [p["pid"] for p in passages if p["key_findings_in_text"] is False]
     pack["warnings"] = [f"key_findings_truncated:{','.join(lost)}"] if lost else []
+    pc = cfg.get("processing") or {}
+    if passages and len(passages) < pc.get("warn_below_passages", 3):
+        pack["warnings"].append(f"few_passages:{len(passages)}")
+    best = max((p["claim_overlap"] or 0 for p in passages), default=0)
+    if passages and best < pc.get("warn_best_overlap_below", 0.5):
+        # Nothing in the pack is closely about the claim: it is unlikely to
+        # settle it, whatever the gold label says. Review before running.
+        pack["warnings"].append(f"no_strong_match:{best:.2f}")
+    verdicts = [p["pid"] for p in passages if p["channel"] == "prior_check"]
+    if verdicts:
+        # The pack holds a published fact-check rating. If the claim came from
+        # a fact-check table, this is likely its own answer key.
+        pack["warnings"].append(f"contains_factcheck_verdict:{','.join(verdicts)}")
     pack["pack_hash"] = content_hash(pack)
     return pack
 
@@ -207,6 +337,129 @@ def load_pack(claim_id: str) -> dict:
     return pack
 
 
+def summary() -> int:
+    """Per-label pack sizes, channels, top domains, flags and warnings."""
+    from collections import defaultdict
+
+    claims = load_claims()
+    by_label = defaultdict(Counter)
+    channels, domains, flags, warns = Counter(), Counter(), Counter(), Counter()
+    empty_ids = []
+    for c in claims:
+        try:
+            pk = load_pack(c["id"])
+        except PackError:
+            by_label[c["label"]]["missing"] += 1
+            continue
+        n = len(pk["passages"])
+        by_label[c["label"]]["empty" if n == 0 else "one" if n == 1 else "2+"] += 1
+        if n == 0:
+            empty_ids.append(c["id"])
+        for ps in pk["passages"]:
+            channels[ps["channel"]] += 1
+            domains[(ps["source_domain"] or "").removeprefix("www.")] += 1
+        flags.update(pk["flags"])
+        warns.update(w.split(":")[0] for w in pk.get("warnings", []))
+    print(f"{len(claims)} claims")
+    print(f"\n{'gold label':<22}{'claims':>7}{'2+':>6}{'one':>6}{'empty':>7}{'missing':>9}")
+    for lab in ("supported", "refuted", "not_enough_evidence"):
+        v = by_label.get(lab, Counter())
+        print(f"{lab:<22}{sum(v.values()):>7}{v['2+']:>6}{v['one']:>6}{v['empty']:>7}{v['missing']:>9}")
+    print(f"\npassages per channel: {dict(channels)}")
+    print("top domains: " + ", ".join(f"{d} {k}" for d, k in domains.most_common(12)))
+    if flags:
+        print(f"flags (claim excluded from runs): {dict(flags)}")
+    if warns:
+        print(f"warnings (kept): {dict(warns)}")
+    if empty_ids:
+        print(f"empty packs: {', '.join(empty_ids)}")
+    missing = sum(v["missing"] for v in by_label.values())
+    if missing:
+        print(f"\n{missing} packs missing: run `python -m study.packs build` to finish.")
+    return 0
+
+
+_SUSPECT = re.compile(
+    r"fact[\s-]?check\w*|snopes|politifact|full\s?fact|\bdebunk\w*|\bhoax\b|pants on fire|"
+    r"\b(?:rated|rating)\b[^.]{0,40}\b(?:true|false|unproven|mixture|misleading)\b|"
+    r"\b(?:mostly|half)[\s-](?:true|false)\b", re.I)
+
+
+def _suspect(p: dict) -> tuple[str, str]:
+    """(where:term, context) for the first fact-check-like mention, else ("", "")."""
+    m = _SUSPECT.search(p.get("url") or "")
+    if m:
+        return f"url:{m.group(0).lower()}", p["url"]
+    m = _SUSPECT.search(p.get("text") or "")
+    if m:
+        t = p["text"]
+        a, b = max(0, m.start() - 120), min(len(t), m.end() + 120)
+        return f"text:{m.group(0).lower()}", ("..." if a else "") + t[a:b].replace("\n", " ") + ("..." if b < len(t) else "")
+    return "", ""
+
+
+def audit() -> int:
+    """One spreadsheet for checking packs by hand: every passage beside its
+    claim, gold label and the fact-checker's notes, with fact-check-like text
+    highlighted, and which passages the CURRENT config would now remove."""
+    import csv as _csv
+
+    claims = load_claims()
+    rows, to_rebuild, n_suspect = [], [], 0
+    for c in claims:
+        fc = c.get("factcheck") or {}
+        base = {"claim_id": c["id"], "gold_label": c["label"],
+                "label_original": c.get("label_original", ""),
+                "label_override_reason": c.get("label_override_reason", ""),
+                "factcheck_rating": c.get("factcheck_rating"), "claim": c["claim"],
+                "whats_true": fc.get("whats_true", ""), "whats_false": fc.get("whats_false", ""),
+                "whats_unknown": fc.get("whats_unknown", "")}
+        try:
+            pk = load_pack(c["id"])
+        except PackError as exc:
+            rows.append({**base, "pid": "", "note_from_tool": f"NO PACK: {exc}"})
+            continue
+        if not pk["passages"]:
+            rows.append({**base, "pid": "", "note_from_tool": "EMPTY PACK"})
+        rebuild = False
+        for ps in pk["passages"]:
+            term, ctx = _suspect(ps)
+            n_suspect += bool(term)
+            now = exclusion_reason(ps)
+            rebuild |= bool(now)
+            rows.append({**base, "pid": ps["pid"], "url": ps["url"],
+                         "source_domain": ps.get("source_domain"),
+                         "published_date": ps.get("published_date"), "channel": ps["channel"],
+                         "suspect": term, "suspect_context": ctx,
+                         "removed_by_current_config": now or "",
+                         "claim_overlap": ps.get("claim_overlap"),
+                         "pack_warnings": "; ".join(pk.get("warnings", [])),
+                         "passage_text": ps["text"], "keep_passage": "", "label_ok": "", "notes": ""})
+        if rebuild:
+            to_rebuild.append(c["id"])
+    out = path("results") / "pack_audit.csv"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    fields = list(dict.fromkeys(k for r in rows for k in r))
+    # utf-8-sig: Excel on Windows shows curly quotes and accents correctly.
+    with out.open("w", newline="", encoding="utf-8-sig") as fh:
+        w = _csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    print(f"{len(claims)} claims, {sum(1 for r in rows if r.get('pid'))} passages -> {out}")
+    print(f"{n_suspect} passages mention fact-checking or a rating (column `suspect`). Read each: "
+          f"a verdict from any source is an answer key. Put the URL of any you remove in "
+          f"packs.exclude_urls, with a note why.")
+    if to_rebuild:
+        print(f"\n{len(to_rebuild)} packs contain a passage the CURRENT config removes "
+              f"(column `removed_by_current_config`): {', '.join(to_rebuild)}")
+        print("Rebuild only those (PowerShell):")
+        print("  " + "; ".join(f"Remove-Item -Force study\\packs\\{cid}.json" for cid in to_rebuild))
+        print(f"  python -m study.packs build --rebuild {','.join(to_rebuild)}")
+    else:
+        print("\nNo pack contains a passage the current config would remove.")
+    return 0
+
+
 def verify() -> int:
     bad = 0
     latest = {}
@@ -224,28 +477,80 @@ def verify() -> int:
 
 
 async def build_all(only: set[str] | None, rebuild: str | None,
-                    retriever: Retriever | None = None) -> None:
+                    retriever: Retriever | None = None, from_raw: bool = False) -> None:
+    """`rebuild` is one claim id or a comma-separated list. Each pack must be
+    deleted by hand first: a rebuild changes the evidence, so it is never
+    done implicitly."""
     claims = load_claims()
     if rebuild:
-        only = {rebuild}
+        only = {x.strip() for x in rebuild.split(",") if x.strip()}
+        unknown = only - {c["id"] for c in claims}
+        if unknown:
+            raise PackError(f"--rebuild: unknown claim ids {sorted(unknown)}")
+        still = [cid for cid in sorted(only) if pack_path(cid).exists()]
+        if still:
+            raise PackError(f"--rebuild: delete these packs first: "
+                            + ", ".join(str(pack_path(c)) for c in still))
     todo = [c for c in claims if (not only or c["id"] in only)]
-    flagged = []
+    flagged, failed = [], []
     for c in todo:
         if pack_path(c["id"]).exists():
             if rebuild:
                 raise PackError(f"--rebuild {rebuild}: delete {pack_path(c['id'])} first.")
             continue
-        pack = await build_pack(c, retriever)
+        try:
+            pack = await build_pack(c, retriever, from_raw=from_raw)
+        except Exception as exc:  # one bad claim must not stop the build
+            failed.append((c["id"], f"{type(exc).__name__}: {exc}"))
+            print(f"  {c['id']}: FAILED {type(exc).__name__}: {str(exc)[:200]} (no pack written; "
+                  f"re-run to retry)")
+            continue
         write_pack(pack, rebuild=bool(rebuild))
         print(f"  {c['id']}: {len(pack['passages'])} passages "
               f"{pack['retrieval']['docs_per_channel']} flags={pack['flags']}"
               + (f" warnings={pack['warnings']}" if pack["warnings"] else ""))
         if pack["flags"]:
             flagged.append((c["id"], pack["flags"]))
+    with_verdict = [c["id"] for c in todo if pack_path(c["id"]).exists()
+                    and any(w.startswith("contains_factcheck_verdict")
+                            for w in json.loads(pack_path(c["id"]).read_text(encoding="utf-8")).get("warnings", []))]
+    if with_verdict:
+        print(f"\n{len(with_verdict)} packs contain a published fact-check rating "
+              f"(warning, not excluded). If these claims come from a fact-check table, the "
+              f"pack may hold their answer. See packs.exclude_channels in config.yaml.")
+    if failed:
+        print(f"\n{len(failed)} claims FAILED and have no pack yet. Re-run the same command to retry:")
+        for cid, why in failed:
+            print(f"  {cid}: {why[:200]}")
     if flagged:
         print(f"\n{len(flagged)} FLAGGED claims (excluded from runs unless --include-flagged):")
         for cid, fl in flagged:
             print(f"  {cid}: {', '.join(fl)}")
+
+
+async def reprocess(retriever: Retriever | None = None) -> Path:
+    """Rebuild every pack from the saved raw search results with the CURRENT
+    rules, without searching again. The existing packs folder is moved aside
+    (packs_superseded_<time>), never deleted, so earlier versions stay
+    inspectable. Refuses if any claim lacks raw results."""
+    import shutil
+    from datetime import datetime
+
+    claims = load_claims()
+    missing = [c["id"] for c in claims if not raw_path(c["id"]).exists()]
+    if missing:
+        raise PackError(f"no saved raw results for {len(missing)} claims ({', '.join(missing[:5])}...). "
+                        f"Run `python -m study.packs build` once with the new code to save them.")
+    old = path("packs")
+    archived = None
+    if old.exists():
+        archived = old.parent / f"{old.name}_superseded_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        for f in old.glob("*.json"):
+            os.chmod(f, stat.S_IWUSR | stat.S_IRUSR)   # read-only packs must be movable on Windows
+        shutil.move(str(old), str(archived))
+        print(f"previous packs moved to {archived}")
+    await build_all(None, None, retriever, from_raw=True)
+    return archived
 
 
 def main() -> None:
@@ -253,14 +558,28 @@ def main() -> None:
     sub = ap.add_subparsers(dest="cmd", required=True)
     b = sub.add_parser("build")
     b.add_argument("--only", default="", help="comma-separated claim ids")
-    b.add_argument("--rebuild", default=None, metavar="CLAIM_ID")
+    b.add_argument("--rebuild", default=None, metavar="CLAIM_IDS",
+                   help="comma-separated claim ids whose pack files you deleted")
+    b.add_argument("--from-raw", action="store_true",
+                   help="use saved raw search results where present (no search credits)")
+    sub.add_parser("reprocess", help="rebuild ALL packs from saved raw results with current rules; "
+                                     "old packs are moved aside, not deleted")
     sub.add_parser("verify")
+    sub.add_parser("summary", help="pack sizes per gold label, channels, domains, flags")
+    sub.add_parser("audit", help="spreadsheet of every passage for checking by hand")
     args = ap.parse_args()
     if args.cmd == "verify":
         raise SystemExit(1 if verify() else 0)
-    only = {x for x in args.only.split(",") if x} or None
+    if args.cmd == "summary":
+        raise SystemExit(summary())
+    if args.cmd == "audit":
+        raise SystemExit(audit())
+    only = {x for x in getattr(args, "only", "").split(",") if x} or None
     try:
-        asyncio.run(build_all(only, args.rebuild))
+        if args.cmd == "reprocess":
+            asyncio.run(reprocess())
+        else:
+            asyncio.run(build_all(only, args.rebuild, from_raw=args.from_raw))
     except PackError as exc:
         raise SystemExit(f"refused: {exc}")
 

@@ -79,6 +79,16 @@ nli:
   # and "coronavirus was bioengineered" scored 0.65 against "Covid originated
   # from China" — related topic, different question.
   prior_claim_match_min: 0.8
+  # A sentence's stance counts only if it shares at least this fraction of the
+  # claim's content words. NLI models read sentences about a DIFFERENT event as
+  # contradicting the claim (Chen et al., NAACL Findings 2025); see grading.py.
+  # 0.15 chosen on the Dataset A dev split by replaying stored stances
+  # (0.10 left 2 of 4 false refutations; 0.15-0.30 behaved the same).
+  # 0 switches the check off.
+  reference_min_overlap: 0.15
+  # Drop near-identical quotes (the same article under two URLs) so copies do
+  # not count as independent sources.
+  dedupe_quotes: true
 
 # Fallbacks, tried in order if the primary provider errors or is rate-limited.
 # Tried in order if the primary errors or is rate-limited.

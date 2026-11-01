@@ -367,6 +367,99 @@ def _stance_from_probs(p: dict[str, float], min_conf: float) -> tuple[Stance, fl
     return "insufficient", max(ent, con)
 
 
+# ------------------------------------------------- reference and duplicates
+#
+# NLI training data (SNLI, MNLI) is labelled on the assumption that premise and
+# hypothesis describe the SAME situation. Given a sentence about a different
+# event, a model trained that way tends to answer "contradiction" — Chen et al.,
+# "On Reference (In-)Determinacy in Natural Language Inference" (NAACL Findings
+# 2025) report over 80% false contradictions on such pairs. In retrieved
+# evidence that is the common case: on the Dataset A packs, about half of the
+# sentences graded `refutes` shared fewer than one in five of the claim's
+# content words ("Two-year-old Katrice Lee went missing..." refuted a claim
+# about the Black Forest at 0.99). Every committed FactShield verdict on those
+# packs was `refuted`, and almost all were wrong.
+#
+# So a sentence must be ABOUT the claim before its stance counts. Lexical
+# overlap is a crude test of that, but it is transparent and cannot fabricate.
+# The threshold is a config value (nli.reference_min_overlap), chosen on the
+# dev split only; see eval/from_packs.py.
+
+_STOP = frozenset(
+    "the a an and or of to in on for with was were is are be been that this from by "
+    "at as it its his her their who said says have has had will would could".split())
+
+
+def _fold(text: str) -> str:
+    import unicodedata
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+
+
+def content_terms(text: str) -> set[str]:
+    """Lower-cased content words, accents folded (Pokémon == Pokemon),
+    possessives stripped (Brennan's == Brennan)."""
+    low = _fold((text or "").replace("\u2019s", "").replace("'s", "")).lower()
+    # Crude stemming by prefix, so "supplements"/"supplementation" and
+    # "stabbed"/"stabbing" meet. It does not make paraphrases meet ("colds" vs
+    # "respiratory infection"): that is the known limit of a lexical test.
+    return {w[:6] for w in re.findall(r"\w+", low) if len(w) > 3 and w not in _STOP}
+
+
+def claim_overlap(sentence: str, claim: str) -> float:
+    ct = content_terms(claim)
+    return len(ct & content_terms(sentence)) / len(ct) if ct else 1.0
+
+
+def claim_names(claim: str) -> set[str]:
+    """Terms from the claim's capitalised words (not the first word): the
+    people, places and things it is about. "Germany's Black Forest caused..."
+    -> {black, forest}."""
+    toks = re.findall(r"[\w'\u2019-]+", claim or "")
+    out: set[str] = set()
+    for k, t in enumerate(toks):
+        if k > 0 and t[:1].isupper() and t.lower() not in _STOP:
+            out |= content_terms(t)
+    return out
+
+
+def about_claim(sentence: str, title: str, claim: str, min_overlap: float) -> bool:
+    """Two lexical tests that a sentence is about THIS claim:
+      * it shares at least `min_overlap` of the claim's content words, and
+      * if the claim names anything, the sentence or its headline mentions one
+        of those names. "Two-year-old Katrice Lee went missing" shares
+        "missing" and "year" with a claim about the Black Forest, so overlap
+        alone let it through at 0.99 `refutes`.
+    """
+    if claim_overlap(sentence, claim) < min_overlap:
+        return False
+    names = claim_names(claim)
+    return not names or bool(names & content_terms(f"{title} {sentence}"))
+
+
+def dedupe(items: list[EvidenceItem], min_jaccard: float = 0.8) -> list[EvidenceItem]:
+    """Keep one item per near-identical quote.
+
+    The same article reached the packs as bbc.com and news.bbc.co.uk, and the
+    same Reuters story under two URLs. Counting each copy as a separate source
+    is the error the data-fusion literature calls ignoring source dependence
+    (Dong, Berti-Equille & Srivastava, VLDB 2009): agreement between copies is
+    not independent confirmation. Identical wording is the cheapest copy signal;
+    it misses rewrites, which is a stated limitation.
+    """
+    kept: list[EvidenceItem] = []
+    seen: list[set[str]] = []
+    for it in items:
+        if it.tier == "prior_check":
+            kept.append(it)
+            continue
+        t = content_terms(it.quote)
+        if t and any(len(t & s) / len(t | s) >= min_jaccard for s in seen):
+            continue
+        seen.append(t)
+        kept.append(it)
+    return kept
+
+
 async def grade(
     docs: list[RawDocument],
     claim: str,
@@ -386,6 +479,7 @@ async def grade(
     min_conf = models().get("nli", {}).get("min_confidence", 0.55)
 
     max_per_doc = models().get("nli", {}).get("max_sentences_per_doc", 4)
+    min_overlap = models().get("nli", {}).get("reference_min_overlap", 0.0)
     # Stance is judged against the assertion; the date is checked separately in
     # evidence_state by comparing publication dates.
     stance_claim = strip_explicit_date(claim)
@@ -480,6 +574,15 @@ async def grade(
         if stance in ("supports", "refutes") and conf < min_conf:
             stance = "insufficient"
 
+        # Not about this claim: the stance is the NLI artefact described above.
+        # Journal abstracts are exempt: they were retrieved by the claim's own
+        # concept query and state findings in technical paraphrase ("respiratory
+        # infection" for "colds"), which a word-overlap test cannot match.
+        if (stance in ("supports", "refutes") and min_overlap
+                and doc.channel != "literature"
+                and not about_claim(sent, doc.title or "", stance_claim, min_overlap)):
+            stance = "insufficient"
+
         # A fact-checker's published rating is a direct verdict — but ONLY if
         # they reviewed the same claim. ClaimReview search returns loosely
         # related claims: searching "Covid originated from China" returns
@@ -544,4 +647,6 @@ async def grade(
         )
         next_id += 1
 
+    if models().get("nli", {}).get("dedupe_quotes", False):
+        items = dedupe(items)
     return items

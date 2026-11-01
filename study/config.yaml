@@ -11,10 +11,102 @@ seed: 20261019
 prompt_version: v1
 
 paths:
-  claims: study/claims             # *.jsonl, version-controlled
+  # Folder holding the claim files: *.csv / *.tsv (see `claims.csv` below)
+  # and/or *.jsonl. Relative to the repo root, or an absolute path such as
+  # C:/Users/you/thesis/claims. The STUDY_CLAIMS_DIR environment variable
+  # overrides it, and is then written into every output's provenance.
+  claims: study/claims
   packs: study/packs               # frozen evidence packs (gitignored)
   responses: study/responses       # raw model output (gitignored)
   results: study/results           # scored rows, summaries, worksheets
+
+# ------------------------------------------------------------------ claims
+claims:
+  csv:
+    # CSV header -> field. Matching ignores case, extra spaces and curly
+    # apostrophes. `claim` and `rating` are required; the rest are optional.
+    columns:
+      claim: claim
+      rating: rate
+      question: question
+      comment: comment
+      whats_true: "what's true"
+      whats_false: "what's false"
+      whats_unknown: "what's unknown"
+      origin: origin
+      summary: summary
+      # Used if present, otherwise derived:
+      id: id
+      set: set
+      domain: domain
+      source_id: source_id
+      source_url: source_url
+      source_published: source_published
+      surface_detectable: surface_detectable
+
+    # THE GOLD LABEL. Fact-check ratings -> the study's three labels.
+    # Matching ignores case and punctuation. Only ratings that unambiguously
+    # mean one label are mapped. Run `python -m study.claimsets check` to see
+    # every rating in your files and where it went, and DECIDE the
+    # excluded ones before building packs; this table is part of the method.
+    #
+    # Caveat for the thesis: a fact-checker's "Unproven" means nobody could
+    # establish it; the study's not_enough_evidence means "not established BY
+    # THIS PACK". They coincide only if the pack holds no deciding evidence.
+    rating_to_label:
+      supported: ["true", "correct attribution", "legit", "correct"]
+      refuted: ["false", "misattributed", "fake", "pants on fire", "incorrect"]
+      not_enough_evidence: ["unproven"]
+    # Known ratings left out on purpose (counted as "excluded (config)").
+    # Move one into the table above if you decide how it maps.
+    excluded_ratings:
+      - mostly true
+      - mostly false
+      - half true
+      - mixture
+      - mixed
+      - unfounded          # "no evidence for it": closer to refuted than NEI; your call
+      - outdated
+      - miscaptioned
+      - satire
+      - labeled satire
+      - originated as satire
+      - legend
+      - lost legend
+      - scam
+      - research in progress
+      - recall
+      - misleading
+      - missing context
+    # File name -> set, e.g. {"snopes_2024.csv": A, "snopes_2026.csv": B}.
+    # Unlisted files use a `set` column if there is one, else the file name.
+    set_by_file:
+      "claims - Dataset A.csv": A
+      "claims - Dataset B.csv": B
+    # Gold labels judged against the frozen PACK, where the fact-checker's
+    # rating cannot be reached from the evidence a model is given. The
+    # original rating is kept (factcheck_rating, label_original) and the
+    # override is recorded on the claim. Decide these from the audit, before
+    # any model run. Format:
+    #   claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on the fatwa"}
+    # Decided 2026-10-21 from the Dataset A audit, before any model run.
+    label_overrides:
+      claims_Dataset_A-0044: {label: refuted, reason: "pack contains a BBC Newsnight investigation concluding the baby story 'probably never happened'"}
+      claims_Dataset_A-0002: {label: not_enough_evidence, reason: "pack has nothing on an ISIS fatwa about puppies"}
+      claims_Dataset_A-0004: {label: not_enough_evidence, reason: "pack never mentions any content warning"}
+      claims_Dataset_A-0006: {label: not_enough_evidence, reason: "pack has nothing refuting the 15,000 figure; a DW passage cites an unrelated 15,000"}
+      claims_Dataset_A-0007: {label: not_enough_evidence, reason: "pack shows World Vision had 60 church partners, but not how many churches opened"}
+      claims_Dataset_A-0008: {label: not_enough_evidence, reason: "search returned only fact-checks (excluded) and a petition page; nothing shows texting RBG reaches senators"}
+      claims_Dataset_B-0006: {label: not_enough_evidence, reason: "pack says Rathee lives in Germany; nothing on citizenship"}
+      claims_Dataset_B-0016: {label: not_enough_evidence, reason: "after removing the CIP rumour rundown (answer key), pack has nothing on whether machines changed votes"}
+      claims_Dataset_B-0036: {label: not_enough_evidence, reason: "after removing the Fact Crescendo fact-check (answer key), pack has nothing on a Rs 10,000 note"}
+      claims_Dataset_B-0051: {label: supported, reason: "Reuters/AP/BBC report at least 60 killed, per the Ethiopian Orthodox Church"}
+      claims_Dataset_B-0046: {label: refuted, reason: "pack has studies showing mail-in fraud is rare (Brookings, Heritage database, Reuters)"}
+      
+    # With no `domain` column, every claim gets this (a key of
+    # packs.domain_to_category). `general` searches the web without a
+    # subject-specific source pack.
+    default_domain: general
 
 # ------------------------------------------------------------------ models
 # MODEL NAMES ARE PLACEHOLDERS ON PURPOSE. Fill them from each provider's
@@ -39,24 +131,38 @@ paths:
 models:
   openai:
     provider: openai
-    model: CHANGE_ME
+    model: gpt-6-luna
     temperature: 0
-    reasoning_effort: null         # e.g. none | low; null = not sent
+    reasoning_effort: none         # e.g. none | low; null = not sent
     max_output_tokens: 1500
     timeout_s: 90
   gemini:
     provider: gemini
-    model: CHANGE_ME
-    temperature: 0
-    thinking_level: null           # e.g. low; null = not sent
-    max_output_tokens: 1500
+    model: gemini-3.5-flash-lite
+    temperature: null        # Google says to remove temperature for 3.8
+    thinking_level: low      # lowest allowed; null means "medium"
+    max_output_tokens: 4000
     timeout_s: 90
   groq:
     provider: groq
-    model: CHANGE_ME
+    model: openai/gpt-oss-120b
     temperature: 0
-    reasoning_effort: null
-    max_output_tokens: 1500
+    reasoning_effort: low    # lowest allowed
+    max_output_tokens: 4000
+    timeout_s: 90
+  # Exploratory fourth panel model, added 2026-10-31 AFTER the main results
+  # were seen. Used only by fsv2/fourth_model.py; NOT in study_models, so the
+  # study runs and the frozen FactShield v2 design are unchanged.
+  # Settings follow the rule used for the other three: lowest reasoning the
+  # model allows. Haiku 5.5 rejects any non-default temperature (HTTP 400),
+  # so none is sent -> its answers are not deterministic (same as Gemini).
+  claude:
+    provider: anthropic
+    model: claude-haiku-5-5
+    temperature: null
+    thinking: disabled       # allowed on Haiku 5.5 at effort high or below
+    effort: low              # sent as output_config.effort
+    max_output_tokens: 4000
     timeout_s: 90
   # Offline stand-in. Makes no network call and is never part of the study.
   # Its rows are marked provider=stub. Used for tests and for showing the
@@ -96,6 +202,74 @@ labels:
 packs:
   max_passages: 8
   max_chars_per_passage: 1500
+  # Fact-check claims will often retrieve their OWN fact-check: the
+  # prior_check channel returns the publisher's rating ("... - Rating: False")
+  # and web search finds the article. A pack holding the answer key tests
+  # copying, not checking. Packs record this as a warning either way; listing
+  # a channel or domain here removes those documents BEFORE freezing.
+  # Decide before building: changing it later means rebuilding every pack.
+  # How many results to ask each search channel for. FactShield's own
+  # retrieve() asks for 3 (backend/config/models.yaml). With fact-check
+  # sites excluded, those 3 were often all fact-checks, leaving packs empty
+  # (4 of 7 refuted claims in claims_Dataset_A). With a number here, the study
+  # calls the same app.retrieval channel functions itself with this limit and
+  # removes exclusions AFTER fetching, so excluded sites cannot use up slots.
+  # null = call app.retrieval.retrieve() exactly as the product does.
+  fetch_per_channel: 8
+  # Decided before any model run (claims_Dataset_A): the claims and their
+  # gold labels come from Snopes, so fact-checking organisations and
+  # published ratings are kept out of every pack.
+  exclude_channels: [prior_check]
+  # Fact-checking organisations: their pages carry verdicts. The first three
+  # are in FactShield's own trusted-source list; the rest turn up via open web.
+  exclude_domains: [snopes.com, politifact.com, fullfact.org, factcheck.org, leadstories.com,
+                    checkyourfact.com, truthorfiction.com, hoax-slayer.net, africacheck.org,
+                    factcheck.afp.com, boomlive.in, altnews.in, misbar.com, logicallyfacts.com,
+                    healthfeedback.org, sciencefeedback.co, climatefeedback.org, metafact.io,newsguardtech.com, newsguardrealitycheck.com
+                    ,factcrescendo.com, factseeker.lk]
+  # Case-insensitive substrings of a URL. Catches fact-check desks on news
+  # sites (reuters.com/.../fact-check-..., apnews.com/article/archive-fact-
+  # checking-...) and stories whose URL names a fact-checker's verdict.
+  exclude_url_patterns: [fact-check, factcheck, fact-checking, fact-or-fiction, snopes, politifact,
+                         fullfact, /hoax-or-fact, /verify/, /truth-o-meter]
+  # Individual pages removed after reading them in `python -m study.packs
+  # audit`. Exact URLs. Each one is a judgement: note why next to it.
+  exclude_urls: [https://www.cip.uw.edu/2026/10/22/election-rumor-rundown-october-22-stella-parton]   # rumour-rundown verdict on B-0016; removed 2026-10-26
+  # How a retrieved page becomes the passage a model sees (study/passages.py).
+  # Applied to every document after the URL/domain exclusions above. Each
+  # removal is recorded in the pack with its reason.
+  processing:
+    enabled: true
+    # Lines shorter than this with no sentence punctuation are treated as
+    # menus, section labels or headline lists and removed.
+    min_words_per_line: 6
+    # After cleaning, keep the sentences most about the claim, each with this
+    # many neighbours, in their original order, up to max_chars_per_passage.
+    context_sentences: 1
+    # Drop a page with almost no article text left after cleaning. Kept low on
+    # purpose: search often returns a short snippet that is real evidence
+    # ("Trump appeared to give Gentiloni the finger"). Menu pages are caught by
+    # the off-topic rule instead.
+    min_chars: 60
+    # Drop a passage that attributes a finding to one of these by name
+    # ("According to Snopes", "PolitiFact rated", "as verified by ...").
+    drop_factcheck_mentions: true
+    factchecker_names: [Snopes, PolitiFact, FactCheck.org, Full Fact, Lead Stories, Check Your Fact,
+                        Truth or Fiction, TruthOrFiction, AFP Fact Check, Reuters Fact Check,
+                        AP Fact Check, USA Today Fact Check, Africa Check, Health Feedback,
+                        Science Feedback, the fact-checkers, fact-checkers, fact checkers,NewsGuard]
+    # Drop a passage sharing less than this share of the claim's content words.
+    # Lenient on purpose: word overlap misses paraphrase. At 0.25 it dropped
+    # "noctilucent clouds ... linked to global warming" for a claim about "night
+    # clouds ... human-caused climate change". Noise costs little; a lost
+    # deciding passage can leave a pack unable to settle its claim.
+    min_claim_overlap: 0.15
+    # Drop a passage whose words overlap this much with one already kept.
+    duplicate_jaccard: 0.8
+    # Warnings (claim kept, but review it in the audit):
+    warn_below_passages: 3
+    warn_best_overlap_below: 0.5
+
   # Study claims carry a `domain`; FactShield's retrieval wants a `category`.
   # In the product, triage chooses the category with an LLM. The study must
   # not call triage, so the mapping is fixed here and published.

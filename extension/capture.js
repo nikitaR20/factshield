@@ -12,7 +12,9 @@
  */
 
 (() => {
-  const MAX_SELECTION = 5000;
+  // The selection is never cut: a selection over the server's word limit
+  // (800) is reported to the user instead. Only the surrounding context, which
+  // is background for resolving "he" or "last year", is limited.
   const MAX_CONTEXT = 8000;
 
   function containingBlock(node) {
@@ -99,7 +101,8 @@
     }
 
     return {
-      selection: text.slice(0, MAX_SELECTION),
+      selection: text,
+      words: text.split(/\s+/).filter(Boolean).length,
       surrounding_text: surrounding.slice(0, MAX_CONTEXT),
       page_title: headline(),
       page_published: publishedDate(),

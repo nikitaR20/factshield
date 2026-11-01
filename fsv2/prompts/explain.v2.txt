@@ -1,0 +1,17 @@
+A fact-checking panel has already decided the verdict below. Do not change it and do not argue with it. Write a short explanation of it for a reader, using ONLY the passages given.
+
+Rules:
+- At most {max_sentences} sentences.
+- Every sentence that states a fact must end with the passage ids it comes from, like [P2] or [P2][P5], and must say only what those passages say.
+- A sentence that describes what the passages do NOT say (for example that none of them gives a date) has no passage id; start it with "Summary:".
+- No sentence may contain facts that are not in the passages.
+
+Reply with one JSON object and nothing else: {"sentences": ["...", "..."]}
+
+CLAIM:
+{claim}
+
+VERDICT: {verdict}
+
+PASSAGES:
+{passages}

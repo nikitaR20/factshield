@@ -39,7 +39,7 @@ def test_empty_pack_renders_none():
 
 
 @pytest.mark.parametrize("text,cond,expected,rule", [
-    ("Supported. The passage says so.", "free", "supported", "first_line"),
+    ("Supported. The passage says so.", "free", "supported", "first_sentence"),
     ("**Refuted**\nBecause P1 says otherwise.", "free", "refuted", "first_line"),
     ("Not enough evidence.\nNothing in the pack.", "free", "not_enough_evidence", "first_line"),
     ("Verdict: refuted\nexplanation", "free", "refuted", "verdict_line"),
@@ -48,10 +48,24 @@ def test_empty_pack_renders_none():
     ("Supported or refuted? Hard to say.", "free", "unparseable", "first_line_no_single_label"),
     ("Let me look.\nSupported.", "free", "unparseable", "first_line_no_single_label"),
     ("Verdict: supported\nVerdict: refuted", "free", "unparseable", "verdict_line_ambiguous"),
-    ("Refuted [P1]. The passage gives a different figure [P2].", "citation", "refuted", "first_line"),
+    ("Refuted [P1]. The passage gives a different figure [P2].", "citation", "refuted", "first_sentence"),
     ("Reasoning: x\nVerdict: Refuted\nConfidence: high", "format", "refuted", "verdict_line"),
     ("Reasoning: x\nThe answer is refuted.\nConfidence: high", "format", "unparseable", "format_missing_verdict_line"),
     ("", "free", "unparseable", "empty"),
+    # Pilot 2026-10-22, gpt-oss: verdict line wrapped in bold, at the end
+    ("The sources do not say this [P1][P3].\n\n**Verdict: not enough evidence**.", "citation",
+     "not_enough_evidence", "verdict_line"),
+    ("Long reasoning.\n**Verdict:** Refuted", "free", "refuted", "verdict_line"),
+    ("## Verdict - Supported\nbecause", "free", "supported", "verdict_line"),
+    # Pilot 2026-10-22, 0001 citation: verdict in the first sentence of a one-paragraph answer
+    ("The claim is refuted. The sources describe Christmas boxes given to servants [P1][P2]. "
+     "Therefore, the claim is not supported by the evidence.", "citation", "refuted", "first_sentence"),
+    # a first sentence with no label falls back to the whole line, as before
+    ("Looking at the sources. Supported, according to P1.", "free", "supported", "first_line"),
+    # a hedged first sentence is still not a verdict
+    ("The claim is partly supported. The rest is not.", "free", "unparseable", "first_line_no_single_label"),
+    # "verdict:" mid-sentence is not a Verdict field (rule is first_line, not verdict_line)
+    ("Text mentioning the verdict: supported, but not as a field", "free", "supported", "first_line"),
     (None, "free", "unparseable", "empty"),
 ])
 def test_parser(text, cond, expected, rule):
@@ -84,3 +98,37 @@ def test_citations_extracted_and_units_split():
 def test_prompt_files_are_pinned_not_latest(tmp_path, monkeypatch):
     with pytest.raises(FileNotFoundError):
         prompts.load("free", "v999")
+
+
+def test_bold_format_fields():
+    out = prompts.parse("**Reasoning:** r\n**Verdict:** supported\n**Confidence:** High", "format")
+    assert out["parsed_verdict"] == "supported" and out["confidence"] == "high" and out["format_ok"] is True
+
+
+# parser-v4 (2026-10-29): Gemini 3.5 Flash-Lite puts the label on the line after
+# a bare "**Verdict:**" heading; v3 recorded those as unparseable.
+import pytest as _pytest
+
+
+@_pytest.mark.parametrize("text,want", [
+    ("**Verdict:**\nsupported\n\n**Reasoning:**\nx", "supported"),
+    ("**VERDICT:**\nrefuted\n\n**REASONING:**\nx", "refuted"),
+    ("**Verdict:** \nrefuted\n\nx", "refuted"),
+    ("Verdict:\nnot enough evidence", "not_enough_evidence"),
+    ("**Verdict:** supported\n\nx", "supported"),
+    ("**Verdict:**\nnot supported", "unparseable"),
+    ("Verdict: supported\nVerdict: refuted", "unparseable"),
+])
+def test_verdict_on_next_line(text, want):
+    from study.prompts import parse
+    assert parse(text, "closed_book")["parsed_verdict"] == want
+
+
+def test_probe_summary_reparses_saved_text():
+    from study.probe import _latest
+    rows = [{"claim_id": "c1", "model": "gemini", "run_index": 0, "condition": "closed_book",
+             "error": None, "parsed_verdict": "unparseable",
+             "response_text": "**Verdict:**\nrefuted\n\n**Reasoning:** x"}]
+    out = _latest(rows)
+    assert out[0]["parsed_verdict"] == "refuted"
+    assert out[0]["parsed_verdict_at_call"] == "unparseable"

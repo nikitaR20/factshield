@@ -1,0 +1,8 @@
+﻿question	comment	claim	rate	what’s true	what's false	what's unknown	origin	summary
+Did Exampleton ban cars?	TEST FIXTURE	Exampleton banned all cars from its centre in 2026.	False		No ban was passed.		A viral post.	Invented row.
+Is the tram free?	TEST FIXTURE	Exampleton's tram became free to ride in 2026.	TRUE	Council approved it.			Council notice.	Invented row.
+Did the mayor resign?	TEST FIXTURE	Exampleton's mayor resigned in 2026.	Mostly True				Rumour.	Invented row.
+Is there a tunnel?	TEST FIXTURE	A secret tunnel runs under Exampleton city hall.	Unproven			Nobody has confirmed it.	Forum post.	Invented row.
+Empty?	TEST FIXTURE		False				x	Invented row.
+New rating?	TEST FIXTURE	Exampleton was founded by a sea captain.	Rating: Legend-ish				x	Invented row.
+Duplicate?	TEST FIXTURE	Exampleton banned all cars from its centre in 2026.	False				x	Invented row.
