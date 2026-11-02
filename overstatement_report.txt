@@ -23,12 +23,12 @@ v2 single claude                     7     3     4    0.137   14   2       77   
 FactShield (unanimity + check)       5     4     1    0.098   11   1       83    0  n=100
 unanimity, no check                  5     4     1    0.098   11   1       83    0  n=100
 majority 2/3                         8     5     3    0.157    7   1       84    0  n=100
-plain format gemini r0              20     9    11    0.526    0   2       44    0  n=66  (partial)
-plain format gemini r1              18     8    10     0.45    0   2       54    0  n=74  (partial)
-plain free gemini r0                18     5    13    0.514    0   2       51    0  n=71  (partial)
-plain free gemini r1                16     8     8      0.5    0   1       47    0  n=64  (partial)
-plain citation gemini r0            18    10     8    0.562    0   0       54    0  n=72  (partial)
-plain citation gemini r1            17     9     8    0.459    0   1       58    0  n=76  (partial)
+plain format gemini r0              28    12    16    0.549    0   2       70    0  n=100  (partial)
+plain format gemini r1              26    10    16     0.51    0   2       72    0  n=100  (partial)
+plain free gemini r0                28    14    14    0.549    0   2       70    0  n=100  (partial)
+plain free gemini r1                29    12    17    0.569    0   1       70    0  n=100  (partial)
+plain citation gemini r0            25    13    12     0.49    0   1       74    0  n=100  (partial)
+plain citation gemini r1            26    13    13     0.51    0   1       73    0  n=100  (partial)
 
 === Overstatement by condition: without 11 audited-label claims (43 NEE-gold claims) ===
 condition                           OS  OS-S  OS-R  OS rate   US  WD  correct  unp
@@ -51,12 +51,12 @@ v2 single claude                     6     3     3     0.14   12   2       69   
 FactShield (unanimity + check)       5     4     1    0.116   10   1       73    0  n=89
 unanimity, no check                  5     4     1    0.116   10   1       73    0  n=89
 majority 2/3                         8     5     3    0.186    6   1       74    0  n=89
-plain format gemini r0              19     9    10    0.594    0   2       38    0  n=59  (partial)
-plain format gemini r1              18     8    10      0.5    0   2       49    0  n=69  (partial)
-plain free gemini r0                16     5    11    0.552    0   2       44    0  n=62  (partial)
-plain free gemini r1                15     8     7    0.517    0   1       42    0  n=58  (partial)
-plain citation gemini r0            17    10     7    0.586    0   0       50    0  n=67  (partial)
-plain citation gemini r1            15     9     6      0.5    0   1       51    0  n=67  (partial)
+plain format gemini r0              26    12    14    0.605    0   2       61    0  n=89  (partial)
+plain format gemini r1              24    10    14    0.558    0   2       63    0  n=89  (partial)
+plain free gemini r0                26    14    12    0.605    0   2       61    0  n=89  (partial)
+plain free gemini r1                27    12    15    0.628    0   1       61    0  n=89  (partial)
+plain citation gemini r0            23    13    10    0.535    0   1       65    0  n=89  (partial)
+plain citation gemini r1            24    13    11    0.558    0   1       64    0  n=89  (partial)
 
 === Run-to-run change in overstatement (plain, NEE claims) ===
   format   openai  OS r0   9  r1   8  claims whose OS status changed 3
