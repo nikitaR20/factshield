@@ -1,0 +1,40 @@
+# Live search on the 55 Set B claims (plan: fsv2/LIVE_SEARCH_PLAN.md).
+# Settings may be changed ONLY after the smoke test and before the full run, and the
+# change is recorded in the plan. Every row records what was actually sent.
+
+prompt: live.v1
+system: "You are helping with research on how claims are checked against evidence found on the web."
+claim_set: B
+
+models:
+  openai:
+    provider: openai
+    model: gpt-6-luna
+    reasoning_effort: none        # lowest; raise to low only if the API refuses search at none
+    temperature: 0                # null = not sent
+    max_tool_calls: 3
+    search_context_size: null     # null = provider default
+    max_output_tokens: 2000
+    timeout_s: 120
+  claude:
+    provider: anthropic
+    model: claude-haiku-5-5
+    tool_version: web_search_20250305
+    max_uses: 3
+    thinking: null                # null = default (adaptive); see plan for why not "disabled"
+    effort: low
+    max_output_tokens: 4000
+    timeout_s: 120
+  gemini:
+    provider: gemini
+    model: gemini-3.5-flash-lite
+    thinking_level: low
+    temperature: null
+    max_output_tokens: 4000
+    timeout_s: 120
+
+# USD, for the cost estimate printed after a run. Check against your dashboards.
+prices:
+  openai: {input_per_m: 0.10, output_per_m: 0.50, per_search: 0.010}
+  claude: {input_per_m: 0.10, output_per_m: 0.50, per_search: 0.010}
+  gemini: {input_per_m: 0.0, output_per_m: 0.0, per_search: 0.0}

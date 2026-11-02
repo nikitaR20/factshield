@@ -1,0 +1,159 @@
+gold: C:\Users\nikit\Downloads\factshield\factshield\study\claims + 11 label overrides
+parser: parser-v4
+
+=== all: 100 claims; gold supported 32, refuted 17, not_enough_evidence 51 ===
+condition                            n correct answered  CW unparse  acc|ans
+FactShield v2 as run               100      83       43   6       0  86%
+v2 single openai                   100      83       47   8       0  83%
+plain format openai                100      85       53  10       0  81%
+plain free openai                  100      80       57  16       0  72%
+plain citation openai              100      76       60  19       0  68%
+v2 single claude                   100      77       42   9       0  79%
+plain format claude                100      86       63  14       0  78%
+plain free claude                  100      73       66  23       3  65%
+plain citation claude              100      73       72  27       0  62%
+v2 single gemini                   100      82       58  14       0  76%
+plain format gemini                100      70       77  30       0  61%
+plain free gemini                  100      70       77  30       0  61%
+plain citation gemini              100      74       74  26       0  65%
+PRIMARY (A_only = FactShield has the event and the plain model does not; exact McNemar, Holm over 3):
+  CW FactShield vs plain format openai         n 100  A_only  2  B_only  6  p 0.289  Holm 0.289
+  CW FactShield vs plain format claude         n 100  A_only  2  B_only 10  p 0.039  Holm 0.077
+  CW FactShield vs plain format gemini         n 100  A_only  0  B_only 24  p 0.000  Holm 0.000
+  correct FactShield vs plain format openai    n 100  A_only  6  B_only  8  p 0.791  Holm 1.000
+  correct FactShield vs plain format claude    n 100  A_only 10  B_only 13  p 0.678  Holm 1.000
+  correct FactShield vs plain format gemini    n 100  A_only 24  B_only 11  p 0.041  Holm 0.123
+secondary (exploratory; Holm within each family):
+  confidently_wrong v2 single vs plain format openai   n 100  A_only  3  B_only  5  p 0.727  Holm 1.000
+  correct v2 single vs plain format openai             n 100  A_only  5  B_only  7  p 0.774  Holm 1.000
+  confidently_wrong v2 single vs plain format claude   n 100  A_only  3  B_only  8  p 0.227  Holm 0.680
+  correct v2 single vs plain format claude             n 100  A_only  8  B_only 17  p 0.108  Holm 0.431
+  confidently_wrong v2 single vs plain format gemini   n 100  A_only  1  B_only 17  p 0.000  Holm 0.001
+  correct v2 single vs plain format gemini             n 100  A_only 17  B_only  5  p 0.017  Holm 0.085
+  confidently_wrong plain free vs plain format openai  n 100  A_only  9  B_only  3  p 0.146  Holm 0.876
+  correct plain free vs plain format openai            n 100  A_only  5  B_only 10  p 0.302  Holm 1.000
+  confidently_wrong plain citation vs plain format openai n 100  A_only 11  B_only  2  p 0.022  Holm 0.202
+  correct plain citation vs plain format openai        n 100  A_only  4  B_only 13  p 0.049  Holm 0.343
+  confidently_wrong plain free vs plain format claude  n 100  A_only 12  B_only  3  p 0.035  Holm 0.281
+  correct plain free vs plain format claude            n 100  A_only  3  B_only 16  p 0.004  Holm 0.044
+  confidently_wrong plain citation vs plain format claude n 100  A_only 15  B_only  2  p 0.002  Holm 0.028
+  correct plain citation vs plain format claude        n 100  A_only  2  B_only 15  p 0.002  Holm 0.028
+  confidently_wrong plain free vs plain format gemini  n 100  A_only  3  B_only  3  p 1.000  Holm 1.000
+  correct plain free vs plain format gemini            n 100  A_only  3  B_only  3  p 1.000  Holm 1.000
+  confidently_wrong plain citation vs plain format gemini n 100  A_only  1  B_only  5  p 0.219  Holm 1.000
+  correct plain citation vs plain format gemini        n 100  A_only  5  B_only  1  p 0.219  Holm 1.000
+
+=== unseen (test + new): 77 claims; gold supported 26, refuted 15, not_enough_evidence 36 ===
+condition                            n correct answered  CW unparse  acc|ans
+FactShield v2 as run                77      62       37   6       0  84%
+v2 single openai                    77      63       40   7       0  82%
+plain format openai                 77      65       44   8       0  82%
+plain free openai                   77      58       48  15       0  69%
+plain citation openai               77      59       48  14       0  71%
+v2 single claude                    77      59       35   7       0  80%
+plain format claude                 77      67       51  10       0  80%
+plain free claude                   77      57       51  16       3  69%
+plain citation claude               77      59       55  18       0  67%
+v2 single gemini                    77      64       47  10       0  79%
+plain format gemini                 77      54       62  23       0  63%
+plain free gemini                   77      54       62  23       0  63%
+plain citation gemini               77      58       59  19       0  68%
+PRIMARY (A_only = FactShield has the event and the plain model does not; exact McNemar, Holm over 3):
+  CW FactShield vs plain format openai         n  77  A_only  2  B_only  4  p 0.688  Holm 0.688
+  CW FactShield vs plain format claude         n  77  A_only  2  B_only  6  p 0.289  Holm 0.578
+  CW FactShield vs plain format gemini         n  77  A_only  0  B_only 17  p 0.000  Holm 0.000
+  correct FactShield vs plain format openai    n  77  A_only  4  B_only  7  p 0.549  Holm 0.665
+  correct FactShield vs plain format claude    n  77  A_only  6  B_only 11  p 0.332  Holm 0.665
+  correct FactShield vs plain format gemini    n  77  A_only 17  B_only  9  p 0.169  Holm 0.506
+secondary (exploratory; Holm within each family):
+  confidently_wrong v2 single vs plain format openai   n  77  A_only  2  B_only  3  p 1.000  Holm 1.000
+  correct v2 single vs plain format openai             n  77  A_only  3  B_only  5  p 0.727  Holm 1.000
+  confidently_wrong v2 single vs plain format claude   n  77  A_only  2  B_only  5  p 0.453  Holm 1.000
+  correct v2 single vs plain format claude             n  77  A_only  5  B_only 13  p 0.096  Holm 0.385
+  confidently_wrong v2 single vs plain format gemini   n  77  A_only  0  B_only 13  p 0.000  Holm 0.001
+  correct v2 single vs plain format gemini             n  77  A_only 13  B_only  3  p 0.021  Holm 0.106
+  confidently_wrong plain free vs plain format openai  n  77  A_only  9  B_only  2  p 0.065  Holm 0.589
+  correct plain free vs plain format openai            n  77  A_only  3  B_only 10  p 0.092  Holm 0.738
+  confidently_wrong plain citation vs plain format openai n  77  A_only  8  B_only  2  p 0.109  Holm 0.766
+  correct plain citation vs plain format openai        n  77  A_only  4  B_only 10  p 0.180  Holm 0.898
+  confidently_wrong plain free vs plain format claude  n  77  A_only  8  B_only  2  p 0.109  Holm 0.766
+  correct plain free vs plain format claude            n  77  A_only  2  B_only 12  p 0.013  Holm 0.155
+  confidently_wrong plain citation vs plain format claude n  77  A_only 10  B_only  2  p 0.039  Holm 0.424
+  correct plain citation vs plain format claude        n  77  A_only  2  B_only 10  p 0.039  Holm 0.424
+  confidently_wrong plain free vs plain format gemini  n  77  A_only  2  B_only  2  p 1.000  Holm 1.000
+  correct plain free vs plain format gemini            n  77  A_only  2  B_only  2  p 1.000  Holm 1.000
+  confidently_wrong plain citation vs plain format gemini n  77  A_only  1  B_only  5  p 0.219  Holm 0.898
+  correct plain citation vs plain format gemini        n  77  A_only  5  B_only  1  p 0.219  Holm 0.898
+
+=== without 11 audited-label claims: 89 claims; gold supported 31, refuted 15, not_enough_evidence 43 ===
+condition                            n correct answered  CW unparse  acc|ans
+FactShield v2 as run                89      73       41   6       0  85%
+v2 single openai                    89      73       45   8       0  82%
+plain format openai                 89      75       51  10       0  80%
+plain free openai                   89      70       53  15       0  72%
+plain citation openai               89      67       57  18       0  68%
+v2 single claude                    89      69       40   8       0  80%
+plain format claude                 89      76       59  13       0  78%
+plain free claude                   89      65       60  20       3  67%
+plain citation claude               89      64       67  25       0  63%
+v2 single gemini                    89      73       55  13       0  76%
+plain format gemini                 89      61       72  28       0  61%
+plain free gemini                   89      61       72  28       0  61%
+plain citation gemini               89      65       69  24       0  65%
+PRIMARY (A_only = FactShield has the event and the plain model does not; exact McNemar, Holm over 3):
+  CW FactShield vs plain format openai         n  89  A_only  2  B_only  6  p 0.289  Holm 0.289
+  CW FactShield vs plain format claude         n  89  A_only  2  B_only  9  p 0.065  Holm 0.131
+  CW FactShield vs plain format gemini         n  89  A_only  0  B_only 22  p 0.000  Holm 0.000
+  correct FactShield vs plain format openai    n  89  A_only  6  B_only  8  p 0.791  Holm 1.000
+  correct FactShield vs plain format claude    n  89  A_only  9  B_only 12  p 0.664  Holm 1.000
+  correct FactShield vs plain format gemini    n  89  A_only 22  B_only 10  p 0.050  Holm 0.150
+secondary (exploratory; Holm within each family):
+  confidently_wrong v2 single vs plain format openai   n  89  A_only  3  B_only  5  p 0.727  Holm 1.000
+  correct v2 single vs plain format openai             n  89  A_only  5  B_only  7  p 0.774  Holm 1.000
+  confidently_wrong v2 single vs plain format claude   n  89  A_only  2  B_only  7  p 0.180  Holm 0.719
+  correct v2 single vs plain format claude             n  89  A_only  7  B_only 14  p 0.189  Holm 0.719
+  confidently_wrong v2 single vs plain format gemini   n  89  A_only  1  B_only 16  p 0.000  Holm 0.002
+  correct v2 single vs plain format gemini             n  89  A_only 16  B_only  4  p 0.012  Holm 0.059
+  confidently_wrong plain free vs plain format openai  n  89  A_only  8  B_only  3  p 0.227  Holm 1.000
+  correct plain free vs plain format openai            n  89  A_only  4  B_only  9  p 0.267  Holm 1.000
+  confidently_wrong plain citation vs plain format openai n  89  A_only 10  B_only  2  p 0.039  Holm 0.347
+  correct plain citation vs plain format openai        n  89  A_only  4  B_only 12  p 0.077  Holm 0.615
+  confidently_wrong plain free vs plain format claude  n  89  A_only 10  B_only  3  p 0.092  Holm 0.646
+  correct plain free vs plain format claude            n  89  A_only  3  B_only 14  p 0.013  Holm 0.127
+  confidently_wrong plain citation vs plain format claude n  89  A_only 14  B_only  2  p 0.004  Holm 0.050
+  correct plain citation vs plain format claude        n  89  A_only  2  B_only 14  p 0.004  Holm 0.050
+  confidently_wrong plain free vs plain format gemini  n  89  A_only  3  B_only  3  p 1.000  Holm 1.000
+  correct plain free vs plain format gemini            n  89  A_only  3  B_only  3  p 1.000  Holm 1.000
+  confidently_wrong plain citation vs plain format gemini n  89  A_only  1  B_only  5  p 0.219  Holm 1.000
+  correct plain citation vs plain format gemini        n  89  A_only  5  B_only  1  p 0.219  Holm 1.000
+
+=== run-to-run change (all claims) ===
+  plain format openai        pairs 100  changed   8 (0.08)  involving a firm verdict 8
+  plain free openai          pairs 100  changed   5 (0.05)  involving a firm verdict 5
+  plain citation openai      pairs 100  changed   2 (0.02)  involving a firm verdict 2
+  plain format claude        pairs 100  changed  10 (0.1)  involving a firm verdict 10
+  plain free claude          pairs 100  changed   2 (0.02)  involving a firm verdict 2
+  plain citation claude      pairs 100  changed   3 (0.03)  involving a firm verdict 3
+  plain format gemini        pairs 100  changed   8 (0.08)  involving a firm verdict 8
+  plain free gemini          pairs 100  changed   8 (0.08)  involving a firm verdict 8
+  plain citation gemini      pairs 100  changed   4 (0.04)  involving a firm verdict 4
+
+=== parse rules (plain rows, all runs) ===
+  claude citation verdict_line                    199
+  claude citation verdict_line_ambiguous          1
+  claude format   verdict_line                    200
+  claude free     verdict_line                    195
+  claude free     verdict_line_ambiguous          5
+  gemini citation first_line                      35
+  gemini citation first_sentence                  11
+  gemini citation verdict_line                    154
+  gemini format   verdict_line                    200
+  gemini free     verdict_line                    200
+  openai citation first_line                      187
+  openai citation first_sentence                  12
+  openai citation verdict_line                    1
+  openai format   verdict_line                    200
+  openai free     first_line                      195
+  openai free     first_sentence                  5
+
+summary JSON: study/results/baseline_summary.json

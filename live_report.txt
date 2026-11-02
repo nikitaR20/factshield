@@ -1,0 +1,17 @@
+55 claims; world labels: supported 21, refuted 21, not_enough_evidence 13; origin: {'unknown': 55}
+model      n correct answered  CW unparse  acc|ans  95% CI       searched  searches/claim  fact-check source
+claude    55      47       44   5       0  89%      0.76-0.95      55/55        1.5          12
+         recall: supported 1.00, refuted 0.86, not_enough_evidence 0.62
+         with a fact-check source: correct 8/12; without: 39/43
+openai    55      47       45   6       0  87%      0.74-0.94      55/55        1.5          22
+         recall: supported 1.00, refuted 0.86, not_enough_evidence 0.62
+         with a fact-check source: correct 18/22; without: 29/33
+
+all 2 gave the same answer on 51 of 55; all the same WRONG answer on 6: ['claims_Dataset_B-0008', 'claims_Dataset_B-0013', 'claims_Dataset_B-0017', 'claims_Dataset_B-0018', 'claims_Dataset_B-0038', 'claims_Dataset_B-0055']
+
+frozen-pack v2 answers scored against the WORLD labels (descriptive; different evidence and date):
+  claude   n  55  correct  35  answered  28  CW  4
+  openai   n  55  correct  38  answered  32  CW  4
+  FactShield n  55  correct  38  answered  30  CW  3
+
+summary JSON: study/results/live_search_summary.json
