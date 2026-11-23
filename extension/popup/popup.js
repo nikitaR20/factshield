@@ -288,8 +288,17 @@
 
   function ratingText(s) {
     if (s.source_type === "fact-check") return "fact-check";
+    // News-quality ratings only mean something for news-type sites (server
+    // sends rating_applies=false for hospitals, journals, medical bodies…).
+    if (s.rating_applies === false) return s.source_type;
     const t = s.rating == null ? "unrated" : `news-quality ${Number(s.rating).toFixed(2)}/1`;
     return `${s.source_type} · ${t}`;
+  }
+
+  function attributionNote(r) {
+    if (!r.attributed || !["supported", "refuted"].includes(r.label)) return "";
+    const what = r.label === "supported" ? "it was said" : "it was not said";
+    return `<div class="why">This claim is about what someone said: “${esc(r.label_text)}” means the sources show ${what}, not whether the statement itself is true. To check the statement itself, remove “said” from the claim and check again.</div>`;
   }
 
   function resultHtml(r, i) {
@@ -320,7 +329,7 @@
     const related = r.related_factchecks.length ? `<h4>Fact-checks of related claims (not used as evidence)</h4>` +
       r.related_factchecks.slice(0, 3).map((f) => `<div class="src">${esc(f.publisher)} rated “${esc(f.reviewed_claim)}”: <b>${esc(f.rating)}</b> · <a href="${esc(f.url)}" target="_blank" rel="noopener">open</a></div>`).join("") : "";
 
-    const sources = r.sources.length ? `<details data-k="src-${i}"><summary>All ${r.sources.length} sources read</summary>` +
+    const sources = r.sources.length ? `<details data-k="src-${i}"><summary>All ${r.sources.length} passages read</summary>` +
       r.sources.map((s) => `<div class="src">${esc(s.domain)} · ${esc(ratingText(s))}${s.date ? ` · ${esc(s.date)}` : ""}${s.copy_of ? ` · same text as ${esc(src[s.copy_of]?.domain || s.copy_of)}` : ""} · <a href="${esc(s.url)}" target="_blank" rel="noopener">open</a></div>`).join("") + `</details>` : "";
 
     const warn = r.search_errors?.length ? `<div class="warn">Some searches failed: ${esc(r.search_errors.join("; "))}</div>` : "";
@@ -329,9 +338,10 @@
       <div class="checking muted">Checking as: ${esc(r.checking_as)}</div>
       <span class="label l-${esc(r.label)}">${LABEL_GLYPH[r.label] || ""} ${esc(r.label_text)}</span>
       <div class="reason">${esc(r.reason_text)}</div>
+      ${attributionNote(r)}
       ${quotes ? `<h4>Key evidence</h4>${quotes}` : ""}
       ${expl}${related}${sources}${warn}
-      <div class="foot">Checked against ${r.n_sources} source${r.n_sources === 1 ? "" : "s"} found on ${esc(r.checked_on)}. FactShield can be wrong — read the quotes.</div>
+      <div class="foot">Read ${r.n_sources} passage${r.n_sources === 1 ? "" : "s"}${r.n_orgs_read ? ` from ${r.n_orgs_read} organisation${r.n_orgs_read === 1 ? "" : "s"}` : ""} found on ${esc(r.checked_on)}. Different organisations can repeat the same original report. FactShield can be wrong — read the quotes.</div>
     </div>`;
   }
 

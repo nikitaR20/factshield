@@ -110,3 +110,72 @@ def test_friendly_errors():
     assert "overloaded" in api._friendly("HTTP 503: high demand")
     assert "daily allowance" in api._friendly("on tokens per day (TPD): Limit 200000")
     assert "API key" in api._friendly("OPENAI_API_KEY not set")
+
+
+# ---- demo fixes 2026-11-09 (FT / GLP-1 check) ---------------------------
+
+from fsv2 import evidence as ev  # noqa: E402
+from fsv2.settings import prompt  # noqa: E402
+
+
+def test_live_extraction_uses_v3_and_thesis_prompts_are_unchanged():
+    v3, _ = prompt("extract", live._live()["extract_prompt_version"])
+    assert "Keep who said it" in v3 and "Never turn \"associated with\" into \"causes\"" in v3
+    # Thesis prompts: same files and hashes as the frozen runs.
+    assert prompt("verdict")[1].startswith("148d0c5b")
+    assert prompt("explain")[1].startswith("147a7538")
+    assert "Keep who said it" not in prompt("extract")[0]
+
+
+def test_live_source_types_for_the_glp1_sources():
+    t = ev.live_source_type
+    assert t("www.aao.org") == "medical or professional body"
+    assert t("aoa.org") == "medical or professional body"
+    assert t("nm.org") == "hospital or health system"
+    assert t("goodrx.com") == "health information website"
+    assert t("pmc.ncbi.nlm.nih.gov") == "research paper or journal"
+    assert t("reuters.com") == "news outlet"            # falls back to the thesis rule
+    assert t("example.org") == "other website"
+
+
+def test_thesis_packs_render_exactly_as_before():
+    # No source_type / rating_applies keys -> thesis labels and ratings.
+    items = ev.prepare({"passages": [{"pid": "P1", "url": "https://goodrx.com/a", "title": "t",
+                                      "source_domain": "goodrx.com", "text": "x " * 20}]})
+    assert items[0].source_type == "news outlet" and items[0].rating_applies
+    assert "news-quality rating 0." in ev.render(items)
+
+
+def test_live_pack_labels_and_hides_news_rating_where_it_does_not_apply():
+    pack = live.as_pack("c", [], [
+        {"url": "https://pmc.ncbi.nlm.nih.gov/articles/1", "source_domain": "pmc.ncbi.nlm.nih.gov",
+         "text": "x", "channel": "web"},
+        {"url": "https://www.reuters.com/a", "source_domain": "reuters.com", "text": "x", "channel": "web"}])
+    items = ev.prepare(pack)
+    assert items[0].source_type == "research paper or journal" and not items[0].rating_applies
+    assert items[1].source_type == "news outlet" and items[1].rating_applies
+    text = ev.render(items)
+    assert "not applicable (not a news site)" in text and "news-quality rating 1.00" in text
+
+
+def test_quotes_are_cut_at_a_word_and_prefer_real_sentences():
+    long = "Warning signs include " + "sudden vision loss in one eye, dark spots, " * 15
+    q = live._best_sentence(long + ". NAION can cause sudden, painless vision loss.", "NAION vision loss")
+    assert q == "NAION can cause sudden, painless vision loss."
+    cut = live._trim("word " * 100)
+    assert cut.endswith(" …") and len(cut) <= live.QUOTE_CHARS + 2 and "wor …" not in cut
+
+
+def test_attributed_claims_are_flagged_and_wording_is_not_independent():
+    assert live.is_attributed("The FDA said NAION can cause vision loss.")
+    assert not live.is_attributed("NAION can cause sudden, painless vision loss.")
+    txt = live._reason_text({"final": "supported"}, 8, 4)
+    assert "independent" not in txt and "4 organisations" in txt
+
+
+def test_attribution_detection_ignores_ambiguous_nouns():
+    assert not live.is_attributed("The United States has 50 states.")
+    assert not live.is_attributed("Insurance claims rose 5% in 2025.")
+    assert not live.is_attributed("Reported cases of measles rose in Texas.")
+    assert live.is_attributed("Reuters reported that the deal collapsed.")
+    assert live.is_attributed("According to WHO, cases fell.")

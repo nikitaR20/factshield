@@ -90,7 +90,7 @@ async def extract(payload: dict, *, stub: bool, client: httpx.AsyncClient) -> di
     n, cap = words(sel), _live()["word_cap"]
     if n > cap:
         raise TooLong(n, cap)
-    tmpl, sha = prompt("extract")
+    tmpl, sha = prompt("extract", _live().get("extract_prompt_version"))
     user = (tmpl.replace("{title}", payload.get("page_title") or "(no title)")
                 .replace("{domain}", payload.get("page_domain") or "unknown site")
                 .replace("{date}", payload.get("page_published") or "unknown date")
@@ -247,28 +247,67 @@ def fc_passage(f: dict) -> dict:
                      f"and rated it \"{f['rating']}\"" + (f" ({f['date']})." if f.get("date") else "."))}
 
 
+def _type_fields(p: dict) -> dict:
+    """Demo-only source type (see evidence.live_source_type). Empty = thesis labels."""
+    if not _live().get("live_source_types") or p.get("channel") == "factcheck":
+        return {}
+    t = ev.live_source_type(p.get("source_domain") or "")
+    return {"source_type": t, "rating_applies": t in ev.RATING_APPLIES}
+
+
 def as_pack(claim: str, fc: list[dict], web: list[dict]) -> dict:
     lv = _live()
     chosen = fc[: lv["max_factcheck_passages"]] + web
     chosen = chosen[: lv["max_passages"]]
     return {"claim": claim, "passages": [{"pid": f"P{i}", **{k: p.get(k) for k in
-            ("url", "title", "source_domain", "published_date", "text", "channel")}}
+            ("url", "title", "source_domain", "published_date", "text", "channel")},
+            **_type_fields(p)}
             for i, p in enumerate(chosen, 1)]}
 
 
 # ------------------------------------------------------------- 4–6. verdict
 
+QUOTE_CHARS = 300
+
+
+def _trim(text: str, limit: int = QUOTE_CHARS) -> str:
+    """Cut at a word boundary and mark the cut, instead of stopping mid-word."""
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].rstrip(",;:—–- ")
+    return cut + " …"
+
+
 def _best_sentence(text: str, statement: str) -> str:
     sents = [s.strip() for s in re.split(r"(?<=[.!?…])\s+", text) if len(s.strip()) > 20] or [text]
     st = P.terms(statement)
-    return max(sents, key=lambda s: len(st & P.terms(s)))[:400]
+    # Most words shared with the statement; on a tie, the shorter sentence
+    # (a run-on list scraped from a page loses to a real sentence).
+    best = max(sents, key=lambda s: (len(st & P.terms(s)), -len(s)))
+    return _trim(best)
+
+
+# A claim about what someone said is supported when the saying is shown, not
+# the content. The popup says so (seen live: "The FDA said ..." claims).
+# Ambiguous words ("states", "claims", "reports", "reported cases") only count
+# when followed by "that", so "the United States" is not an attribution.
+_REPORTED = re.compile(
+    r"\b(said|says|announced|announces|warned|warns|claimed|stated|told|tells|alleged|"
+    r"alleges|denied|denies|according to|(?:reported|reports|claims|states|say) that)\b", re.I)
+
+
+def is_attributed(claim: str) -> bool:
+    return bool(_REPORTED.search(claim or ""))
 
 
 def _reason_text(res: dict, n_sources: int, n_orgs: int) -> str:
     final, reason = res["final"], res.get("reason")
     if final in ("supported", "refuted"):
-        return (f"All 3 checking models agreed · {n_orgs} independent "
-                f"source{'s' if n_orgs != 1 else ''} cited")
+        # "independent" overstated: different organisations can still repeat
+        # one original report (thesis claim A-0023).
+        return (f"All 3 checking models agreed · evidence cited from {n_orgs} "
+                f"organisation{'s' if n_orgs != 1 else ''}")
     if final == "conflicting_evidence":
         return "The relevant sources disagree with each other, and I can't settle it from them."
     if reason == "models_disagreed":
@@ -305,12 +344,17 @@ def build_result(claim: str, pack: dict, res: dict, related: list[dict], errors:
     sources = [{"pid": it.pid, "url": it.url, "title": it.title, "domain": it.domain,
                 "date": it.date, "source_type": ("fact-check" if by[it.pid].get("channel") == "factcheck"
                                                  else it.source_type),
-                "rating": it.rating, "copy_of": it.same_text_as, "same_org_as": it.same_org_as,
+                "rating": it.rating if it.rating_applies else None,
+                "rating_applies": it.rating_applies,
+                "copy_of": it.same_text_as, "same_org_as": it.same_org_as,
                 "text": by[it.pid]["text"]} for it in items]
+    orgs_read = {ev.organisation(it.domain) for it in items} - {""}
     expl = res.get("explanation") or {}
     return {"checking_as": claim, "label": res["final"], "label_text": LABEL_TEXT[res["final"]],
             "reason": res.get("reason"),
             "reason_text": _reason_text(res, len(sources), len(orgs)),
+            "attributed": is_attributed(claim), "n_orgs_cited": len(orgs),
+            "n_orgs_read": len(orgs_read),
             "key_quotes": quotes, "explanation": expl.get("sentences") or [],
             "quotes_only": bool(expl.get("quotes_only")), "sources": sources,
             "related_factchecks": related, "n_sources": len(sources),

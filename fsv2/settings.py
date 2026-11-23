@@ -17,8 +17,12 @@ def cfg() -> dict:
 
 
 @functools.lru_cache(maxsize=None)
-def prompt(name: str) -> tuple[str, str]:
-    """(text, sha256) of fsv2/prompts/<name>.<version>.txt."""
-    p = HERE / "prompts" / f"{name}.{cfg()['prompt_version']}.txt"
+def prompt(name: str, version: str | None = None) -> tuple[str, str]:
+    """(text, sha256) of fsv2/prompts/<name>.<version>.txt.
+
+    `version` defaults to the thesis `prompt_version`. Only the live demo
+    passes another one (live.extract_prompt_version); the thesis never does.
+    """
+    p = HERE / "prompts" / f"{name}.{version or cfg()['prompt_version']}.txt"
     text = p.read_text(encoding="utf-8").rstrip("\n")
     return text, hashlib.sha256(text.encode("utf-8")).hexdigest()

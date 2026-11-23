@@ -92,6 +92,70 @@ def source_type(domain: str) -> str:
     return "other website"
 
 
+# ---- live demo only: better source types (2026-11-09)
+#
+# The thesis rule above calls ANY domain in the Lin et al. ratings a "news
+# outlet". Those ratings are about news sites, so in a medical check a hospital
+# (nm.org) and a drug-pricing site (goodrx.com) were shown as news outlets, a
+# journal archive (pmc.ncbi.nlm.nih.gov) got a news rating, and the
+# ophthalmology bodies (aao.org, aoa.org) were "other website · unrated".
+# The demo uses the hand-made lists below first. They are short lists of
+# well-known sites, not a classifier: anything not listed falls back to the
+# thesis rule. The thesis packs never pass through this function.
+
+_RESEARCH = {
+    "pmc.ncbi.nlm.nih.gov", "pubmed.ncbi.nlm.nih.gov", "ncbi.nlm.nih.gov", "doi.org",
+    "jamanetwork.com", "thelancet.com", "nejm.org", "bmj.com", "nature.com", "science.org",
+    "cell.com", "pnas.org", "sciencedirect.com", "link.springer.com", "springer.com",
+    "onlinelibrary.wiley.com", "academic.oup.com", "tandfonline.com", "journals.sagepub.com",
+    "journals.plos.org", "frontiersin.org", "mdpi.com", "cochranelibrary.com",
+    "arxiv.org", "medrxiv.org", "biorxiv.org", "aclanthology.org", "ssrn.com",
+}
+_INTERNATIONAL = {"who.int", "un.org", "ema.europa.eu", "europa.eu", "oecd.org", "imf.org",
+                  "worldbank.org", "unicef.org"}
+_PROFESSIONAL = {
+    "aao.org", "aoa.org", "ama-assn.org", "heart.org", "cancer.org", "diabetes.org",
+    "acog.org", "aap.org", "healthychildren.org", "acc.org", "idsociety.org", "endocrine.org",
+    "aad.org", "psychiatry.org", "apa.org", "rcplondon.ac.uk", "rcophth.ac.uk", "nice.org.uk",
+    "bma.org.uk",
+}
+_HOSPITAL = {
+    "mayoclinic.org", "clevelandclinic.org", "hopkinsmedicine.org", "nm.org", "mountsinai.org",
+    "mskcc.org", "mdanderson.org", "uclahealth.org", "stanfordhealthcare.org", "nyulangone.org",
+    "massgeneral.org", "brighamandwomens.org", "cedars-sinai.org", "upmc.com", "kp.org",
+    "kaiserpermanente.org", "pennmedicine.org", "uchicagomedicine.org", "houstonmethodist.org",
+}
+_HEALTH_INFO = {
+    "goodrx.com", "webmd.com", "healthline.com", "medicalnewstoday.com", "verywellhealth.com",
+    "drugs.com", "everydayhealth.com", "health.com", "medlineplus.gov", "patient.info",
+    "health.harvard.edu",
+}
+
+# Types for which a news-quality rating means something.
+RATING_APPLIES = {"news outlet", "health information website"}
+
+
+def _listed(h: str, table: set[str]) -> bool:
+    return any(h == d or h.endswith("." + d) for d in table)
+
+
+def live_source_type(domain: str) -> str:
+    h = host(domain)
+    if h.endswith("wikipedia.org"):
+        return "encyclopedia (user-edited)"
+    if _listed(h, _RESEARCH):
+        return "research paper or journal"
+    if _listed(h, _HEALTH_INFO):
+        return "health information website"
+    if _listed(h, _PROFESSIONAL):
+        return "medical or professional body"
+    if _listed(h, _HOSPITAL):
+        return "hospital or health system"
+    if _listed(h, _INTERNATIONAL) or h.endswith(".int"):
+        return "international organisation"
+    return source_type(h)
+
+
 def shingles(text: str, k: int) -> set[tuple[str, ...]]:
     words = _WORD.findall(text.lower())
     return {tuple(words[i:i + k]) for i in range(max(0, len(words) - k + 1))}
@@ -115,6 +179,7 @@ class Prepared:
     also_published_by: list[str] = field(default_factory=list)
     same_org_as: list[str] = field(default_factory=list)
     credits_wire: list[str] = field(default_factory=list)
+    rating_applies: bool = True                  # False only for demo types where a news rating means nothing
 
 
 def prepare(pack: dict) -> list[Prepared]:
@@ -127,9 +192,12 @@ def prepare(pack: dict) -> list[Prepared]:
             pid=p["pid"], url=p["url"], title=p.get("title") or "(untitled)", domain=dom,
             date=(str(p["published_date"])[:10] if p.get("published_date") else None),
             text=p.get("text") or "",
-            source_type=("published fact-check" if p.get("channel") == "factcheck" else source_type(dom)),
+            source_type=("published fact-check" if p.get("channel") == "factcheck"
+                         else p.get("source_type") or source_type(dom)),
             rating=rating(dom),
             credits_wire=[name for name, rx in _WIRE if rx.search(p.get("text") or "")],
+            # Thesis packs carry neither key, so they render exactly as before.
+            rating_applies=bool(p.get("rating_applies", True)),
         )
         sh[item.pid] = shingles(item.text, ev["shingle_words"])
         out.append(item)
@@ -160,9 +228,13 @@ def render(items: list[Prepared]) -> str:
             blocks.append(f"{head}\nSame text as [{it.same_text_as}]; not repeated. "
                           f"It is a copy, not a separate confirmation.")
             continue
-        notes = [f"Source type: {it.source_type}",
-                 (f"news-quality rating {it.rating:.2f} on a 0–1 scale (expert ratings, Lin et al. 2023)"
-                  if it.rating is not None else "news-quality rating: unrated (not in the list; not a judgement)")]
+        if not it.rating_applies:
+            rated = "news-quality rating: not applicable (not a news site)"
+        elif it.rating is not None:
+            rated = f"news-quality rating {it.rating:.2f} on a 0–1 scale (expert ratings, Lin et al. 2023)"
+        else:
+            rated = "news-quality rating: unrated (not in the list; not a judgement)"
+        notes = [f"Source type: {it.source_type}", rated]
         if it.also_published_by:
             notes.append("also published by " + ", ".join(it.also_published_by))
         if it.same_org_as:

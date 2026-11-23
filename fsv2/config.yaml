@@ -52,6 +52,17 @@ live:
   max_chars_per_passage: 1500   # as for the packs
   helper_model: openai          # claim extraction + "same claim?" check
   explain: true
+  # Demo fixes, 2026-11-09 (after a live check of an FT article on GLP-1
+  # drugs). None of these touch the thesis runs, which never read `live`.
+  #  - extract v3: keeps who said it and hedges ("potential", "associated
+  #    with"), names the thing referred to, turns "on Monday" into a date.
+  #    v2 (the design-time prompt) dropped all three. Set back to v2 to undo.
+  extract_prompt_version: v3
+  #  - live_source_types: label hospitals, medical bodies, research archives
+  #    and health-information sites by what they are, instead of calling any
+  #    domain in the Lin et al. (news-site) ratings a "news outlet"; show the
+  #    news-quality rating only where it applies. false = thesis labels.
+  live_source_types: true
 
 explanation:
   max_sentences: 4
